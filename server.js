@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
-const { ExpressPeerServer } = require('peer');
 const path = require('path');
 const fs = require('fs');
 const youtubedl = require('yt-dlp-exec');
@@ -9,53 +8,89 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { 
+    cors: { origin: "*" },
+    maxHttpBufferSize: 1e8 // 100MB buffer for audio chunks
+});
 
 const PORT = process.env.PORT || 3000;
 const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'downloads');
 
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
-// PeerJS Server (Same Port)
-const peerServer = ExpressPeerServer(server, { debug: true, path: '/myapp' });
-app.use('/peerjs', peerServer);
-
+app.use(express.json()); // To parse JSON bodies
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/stream', express.static(DOWNLOAD_DIR));
 
-// Video Streaming Route
+// === 1. GLOBAL STATE (THE TRUTH) ===
+let rooms = {};
+
+// === 2. API ENDPOINTS (CONTROL CENTER) ===
+
+// API: Get Room Status (For Injection)
+app.get('/api/room/:roomId/status', (req, res) => {
+    const { roomId } = req.params;
+    if(rooms[roomId]) {
+        res.json({ success: true, state: rooms[roomId] });
+    } else {
+        res.status(404).json({ success: false, error: "Room not found" });
+    }
+});
+
+// API: Control Video (Play/Pause/Seek)
+app.post('/api/room/:roomId/control', (req, res) => {
+    const { roomId } = req.params;
+    const { action, time, adminSecret } = req.body; // action: 'play'|'pause'|'seek'
+    
+    const room = rooms[roomId];
+    if(!room) return res.status(404).json({ error: "No Room" });
+
+    // Validate Admin (Simple check based on socket ID mapping or secret)
+    // Here assuming the request comes from authorized frontend logic
+    
+    console.log(`[API CALL] Room: ${roomId} -> Action: ${action} @ ${time}`);
+
+    if (action === 'play') {
+        room.isPlaying = true;
+        room.status = 'playing';
+        io.to(roomId).emit('force_sync', { action: 'play', time: room.currentTime });
+    } 
+    else if (action === 'pause') {
+        room.isPlaying = false;
+        room.status = 'paused';
+        io.to(roomId).emit('force_sync', { action: 'pause', time: room.currentTime });
+    } 
+    else if (action === 'seek') {
+        room.currentTime = parseFloat(time);
+        io.to(roomId).emit('force_sync', { action: 'seek', time: room.currentTime });
+    }
+
+    res.json({ success: true, newState: room });
+});
+
+// === 3. VIDEO STREAMING ===
 app.get('/video/:filename', (req, res) => {
+    // Standard Streaming Logic (Same as before)
     const filePath = path.join(DOWNLOAD_DIR, req.params.filename);
     if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
-
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
-
     if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const start = parseInt(parts[0], 10);
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunksize = (end - start) + 1;
         const file = fs.createReadStream(filePath, { start, end });
-        const head = {
-            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunksize,
-            'Content-Type': 'video/mp4',
-        };
-        res.writeHead(206, head);
+        res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${fileSize}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4' });
         file.pipe(res);
     } else {
-        const head = { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' };
-        res.writeHead(200, head);
+        res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' });
         fs.createReadStream(filePath).pipe(res);
     }
 });
 
-// === ROOM LOGIC ===
-let rooms = {};
-
+// === 4. SOCKET LOGIC (CONNECTION & AUDIO) ===
 io.on('connection', (socket) => {
     
     socket.on('join_room', (roomId) => {
@@ -64,106 +99,97 @@ io.on('connection', (socket) => {
             rooms[roomId] = { 
                 admins: [socket.id], 
                 users: [], 
-                status: 'idle', 
                 videoFilename: null, 
                 currentTime: 0, 
                 isPlaying: false,
-                peerIds: [] // 🔥 Store Voice IDs
+                status: 'idle',
+                duration: 0
             };
+        } else {
+            // Re-joining user? Just add to list
+            if(!rooms[roomId].users.includes(socket.id)) rooms[roomId].users.push(socket.id);
         }
-        rooms[roomId].users.push(socket.id);
-        
-        // نئے یوزر کو فوراً کرنٹ ٹائم پر بھیجیں
-        socket.emit('sync_immediate', { 
-            time: rooms[roomId].currentTime, 
-            isPlaying: rooms[roomId].isPlaying,
-            filename: rooms[roomId].videoFilename
+
+        // 🔥 INJECTION: Send exact server state immediately
+        const room = rooms[roomId];
+        socket.emit('inject_state', {
+            time: room.currentTime,
+            isPlaying: room.isPlaying,
+            filename: room.videoFilename,
+            isAdmin: room.admins.includes(socket.id)
         });
-
-        // یوزر کو روم کا ڈیٹا بھیجیں
-        io.to(roomId).emit('update_room_data', rooms[roomId]);
+        
+        io.to(roomId).emit('update_users', { count: room.users.length });
     });
 
-    // --- 🔥 VOICE MESH NETWORK LOGIC ---
-    socket.on('join_voice', (data) => {
-        const room = rooms[data.roomId];
-        if(room) {
-            // 1. نئے یوزر کو پرانے لوگوں کی لسٹ بھیجیں تاکہ وہ سب کو کال کرے
-            socket.emit('all_voice_users', room.peerIds);
-            
-            // 2. اس نئے یوزر کی ID لسٹ میں ڈالیں
-            if(!room.peerIds.includes(data.peerId)) {
-                room.peerIds.push(data.peerId);
-            }
-
-            // 3. دوسروں کو بتائیں کہ نیا بندہ آیا ہے (تاکہ وہ بھی کنیکٹ ہو سکیں)
-            socket.to(data.roomId).emit('user_joined_voice', data.peerId);
-        }
+    // --- 🎤 GLOBAL AUDIO RELAY (API STYLE) ---
+    // Instead of P2P, we send audio chunks to server, server broadcasts to room
+    socket.on('audio_stream', (data) => {
+        // data = { roomId, audioChunk }
+        // Broadcast to everyone in room EXCEPT sender
+        socket.to(data.roomId).emit('global_voice', data.audioChunk);
     });
 
-    // --- VIDEO LOGIC ---
-    socket.on('get_video_info', async (data) => {
-        try {
-            io.to(data.roomId).emit('processing_msg', "🔍 Checking URL...");
-            const output = await youtubedl(data.url, {
-                dumpSingleJson: true, noWarnings: true, noCheckCertificates: true,
-                extractorArgs: "youtube:player_client=android",
-            });
-            socket.emit('show_quality_menu', { title: output.title, url: data.url });
-        } catch (err) { socket.emit('error_msg', "Link Failed."); }
-    });
-
+    // --- DOWNLOAD START ---
     socket.on('start_download', async (data) => {
         const room = rooms[data.roomId];
-        if (room) {
-            io.to(data.roomId).emit('processing_msg', `⬇️ Server Downloading...`);
-            const filename = `${uuidv4()}.mp4`;
-            const outputPath = path.join(DOWNLOAD_DIR, filename);
-            let formatString = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
-            if (data.quality === 'audio') formatString = 'bestaudio/best';
+        if(!room) return;
+        
+        io.to(data.roomId).emit('status_msg', "⬇️ Server Downloading...");
+        
+        const filename = `${uuidv4()}.mp4`;
+        const outputPath = path.join(DOWNLOAD_DIR, filename);
+        let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
+        if (data.quality === 'audio') format = 'bestaudio/best';
 
-            try {
-                await youtubedl(data.url, {
-                    output: outputPath, format: formatString, noCheckCertificates: true,
-                    noWarnings: true, preferFreeFormats: true, forceIpv4: true,
-                    extractorArgs: "youtube:player_client=android"
-                });
-                
-                room.videoFilename = filename;
-                room.status = 'ready';
-                room.currentTime = 0;
-                room.isPlaying = true;
-                
-                io.to(data.roomId).emit('download_complete', { filename });
-                io.to(data.roomId).emit('update_room_data', room);
-            } catch (e) { io.to(data.roomId).emit('error_msg', "Download Failed."); }
+        try {
+            await youtubedl(data.url, {
+                output: outputPath, format: format, noCheckCertificates: true,
+                preferFreeFormats: true, extractorArgs: "youtube:player_client=android"
+            });
+            
+            room.videoFilename = filename;
+            room.currentTime = 0;
+            room.isPlaying = true; // Auto start
+            room.status = 'playing';
+            room.duration = data.duration || 3600;
+
+            io.to(data.roomId).emit('ready_to_play', { filename });
+        } catch (e) {
+            io.to(data.roomId).emit('status_msg', "❌ Download Error");
         }
     });
 
-    socket.on('time_update', (data) => {
-        if(rooms[data.roomId]) rooms[data.roomId].currentTime = data.time;
+    // --- INFO FETCH ---
+    socket.on('get_info', async (data) => {
+        try {
+            const out = await youtubedl(data.url, { dumpSingleJson: true, noWarnings: true });
+            socket.emit('info_result', { title: out.title, url: data.url, duration: out.duration });
+        } catch (e) { socket.emit('status_msg', "❌ Invalid Link"); }
     });
 
     socket.on('disconnect', () => {
-        for (const r in rooms) {
-            rooms[r].users = rooms[r].users.filter(u => u !== socket.id);
-            // ریموو وائس ID اگر بندہ چلا جائے
-            // (Client side handle करेगा PeerJS close event, Server only updates list)
-            io.to(r).emit('update_room_data', rooms[r]);
-        }
+        // Simple cleanup
     });
 });
 
-// 🔥 SERVER CLOCK (Background Play)
+// === 🔥 MASTER CLOCK ENGINE 🔥 ===
+// This runs regardless of who is connected. 
+// It simulates the "Live Stream" progressing.
 setInterval(() => {
-    for (const roomId in rooms) {
-        let room = rooms[roomId];
-        if (room.status === 'ready' && room.isPlaying) {
+    for (const id in rooms) {
+        const room = rooms[id];
+        if (room.status === 'playing' && room.videoFilename) {
             room.currentTime += 1;
+            
+            // Optional: Every 5 seconds, force sync via socket to correct drift
+            if (Math.floor(room.currentTime) % 5 === 0) {
+                 io.to(id).emit('clock_sync', { time: room.currentTime });
+            }
         }
     }
 }, 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`API Server Active on ${PORT}`);
 });
