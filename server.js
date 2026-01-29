@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
-const { ExpressPeerServer } = require('peer'); // ✅ Same Port Fix
+const { ExpressPeerServer } = require('peer');
 const path = require('path');
 const fs = require('fs');
 const youtubedl = require('yt-dlp-exec');
@@ -16,18 +16,14 @@ const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirnam
 
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
-// === 1. VOICE SERVER (ATTACHED TO HTTP SERVER) ===
-// یہ اب الگ پورٹ پر نہیں، اسی 3000 پورٹ پر چلے گا تاکہ کنکشن فیل نہ ہو
-const peerServer = ExpressPeerServer(server, {
-    debug: true,
-    path: '/myapp'
-});
+// PeerJS Server (Same Port)
+const peerServer = ExpressPeerServer(server, { debug: true, path: '/myapp' });
 app.use('/peerjs', peerServer);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/stream', express.static(DOWNLOAD_DIR));
 
-// === 2. VIDEO STREAMING ===
+// Video Streaming Route
 app.get('/video/:filename', (req, res) => {
     const filePath = path.join(DOWNLOAD_DIR, req.params.filename);
     if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
@@ -57,7 +53,7 @@ app.get('/video/:filename', (req, res) => {
     }
 });
 
-// === 3. ROOM LOGIC ===
+// === ROOM LOGIC ===
 let rooms = {};
 
 io.on('connection', (socket) => {
@@ -72,63 +68,62 @@ io.on('connection', (socket) => {
                 videoFilename: null, 
                 currentTime: 0, 
                 isPlaying: false,
-                duration: 0 
+                peerIds: [] // 🔥 Store Voice IDs
             };
         }
         rooms[roomId].users.push(socket.id);
         
-        // نئے بندے کو کرنٹ سرور ٹائم بھیجیں
-        io.to(roomId).emit('update_room_data', rooms[roomId]);
+        // نئے یوزر کو فوراً کرنٹ ٹائم پر بھیجیں
         socket.emit('sync_immediate', { 
             time: rooms[roomId].currentTime, 
-            isPlaying: rooms[roomId].isPlaying 
+            isPlaying: rooms[roomId].isPlaying,
+            filename: rooms[roomId].videoFilename
         });
+
+        // یوزر کو روم کا ڈیٹا بھیجیں
+        io.to(roomId).emit('update_room_data', rooms[roomId]);
     });
 
-    // --- VOICE ID EXCHANGE ---
-    socket.on('voice_ready', (data) => {
-        socket.to(data.roomId).emit('user_voice_joined', data.peerId);
-    });
-
-    // --- ADMIN PROMOTION ---
-    socket.on('promote_user', (data) => {
+    // --- 🔥 VOICE MESH NETWORK LOGIC ---
+    socket.on('join_voice', (data) => {
         const room = rooms[data.roomId];
-        if(room && room.admins.includes(socket.id)) {
-            if(!room.admins.includes(data.targetId)) {
-                room.admins.push(data.targetId);
-                io.to(data.roomId).emit('update_room_data', room);
+        if(room) {
+            // 1. نئے یوزر کو پرانے لوگوں کی لسٹ بھیجیں تاکہ وہ سب کو کال کرے
+            socket.emit('all_voice_users', room.peerIds);
+            
+            // 2. اس نئے یوزر کی ID لسٹ میں ڈالیں
+            if(!room.peerIds.includes(data.peerId)) {
+                room.peerIds.push(data.peerId);
             }
+
+            // 3. دوسروں کو بتائیں کہ نیا بندہ آیا ہے (تاکہ وہ بھی کنیکٹ ہو سکیں)
+            socket.to(data.roomId).emit('user_joined_voice', data.peerId);
         }
     });
 
-    // --- VIDEO INFO ---
+    // --- VIDEO LOGIC ---
     socket.on('get_video_info', async (data) => {
-        const { roomId, url } = data;
-        io.to(roomId).emit('processing_msg', "🔍 Fetching Formats...");
         try {
-            const output = await youtubedl(url, {
+            io.to(data.roomId).emit('processing_msg', "🔍 Checking URL...");
+            const output = await youtubedl(data.url, {
                 dumpSingleJson: true, noWarnings: true, noCheckCertificates: true,
                 extractorArgs: "youtube:player_client=android",
             });
-            socket.emit('show_quality_menu', { title: output.title, url: url, duration: output.duration });
-        } catch (err) {
-            socket.emit('error_msg', "❌ Link Error.");
-        }
+            socket.emit('show_quality_menu', { title: output.title, url: data.url });
+        } catch (err) { socket.emit('error_msg', "Link Failed."); }
     });
 
-    // --- START DOWNLOAD ---
     socket.on('start_download', async (data) => {
-        const { roomId, url, quality, duration } = data;
-        const room = rooms[roomId];
+        const room = rooms[data.roomId];
         if (room) {
-            io.to(roomId).emit('processing_msg', `⬇️ Server Downloading...`);
+            io.to(data.roomId).emit('processing_msg', `⬇️ Server Downloading...`);
             const filename = `${uuidv4()}.mp4`;
             const outputPath = path.join(DOWNLOAD_DIR, filename);
-            let formatString = `bestvideo[height<=${quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
-            if (quality === 'audio') formatString = 'bestaudio/best';
+            let formatString = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
+            if (data.quality === 'audio') formatString = 'bestaudio/best';
 
             try {
-                await youtubedl(url, {
+                await youtubedl(data.url, {
                     output: outputPath, format: formatString, noCheckCertificates: true,
                     noWarnings: true, preferFreeFormats: true, forceIpv4: true,
                     extractorArgs: "youtube:player_client=android"
@@ -137,55 +132,34 @@ io.on('connection', (socket) => {
                 room.videoFilename = filename;
                 room.status = 'ready';
                 room.currentTime = 0;
-                room.isPlaying = true; // Auto Play on Start
-                room.duration = duration || 3600; // Default 1 hour if unknown
+                room.isPlaying = true;
                 
-                io.to(roomId).emit('download_complete', { filename });
-                io.to(roomId).emit('update_room_data', room);
-            } catch (e) {
-                console.error(e);
-                io.to(roomId).emit('error_msg', "Download Failed.");
-            }
+                io.to(data.roomId).emit('download_complete', { filename });
+                io.to(data.roomId).emit('update_room_data', room);
+            } catch (e) { io.to(data.roomId).emit('error_msg', "Download Failed."); }
         }
     });
 
-    // --- ACTION HANDLERS ---
-    socket.on('video_action', (data) => {
-        const room = rooms[data.roomId];
-        if (room && room.admins.includes(socket.id)) {
-            if (data.type === 'play') room.isPlaying = true;
-            if (data.type === 'pause') room.isPlaying = false;
-            if (data.type === 'seek') room.currentTime = data.time;
-            
-            // Broadcast to everyone
-            io.to(data.roomId).emit('perform_action', data);
-        }
-    });
-
-    // Admin updates exact time (correction)
     socket.on('time_update', (data) => {
-        const room = rooms[data.roomId];
-        if (room && room.admins.includes(socket.id)) {
-            room.currentTime = data.time; 
-        }
+        if(rooms[data.roomId]) rooms[data.roomId].currentTime = data.time;
     });
 
     socket.on('disconnect', () => {
         for (const r in rooms) {
             rooms[r].users = rooms[r].users.filter(u => u !== socket.id);
+            // ریموو وائس ID اگر بندہ چلا جائے
+            // (Client side handle करेगा PeerJS close event, Server only updates list)
             io.to(r).emit('update_room_data', rooms[r]);
         }
     });
 });
 
-// === 🔥 THE LIVE STREAM ENGINE 🔥 ===
-// یہ لوپ ہر سیکنڈ چلے گا اور ویڈیو کا ٹائم بڑھائے گا، چاہے براؤزر بند ہو
+// 🔥 SERVER CLOCK (Background Play)
 setInterval(() => {
     for (const roomId in rooms) {
         let room = rooms[roomId];
-        // اگر پلے ہو رہا ہے اور ویڈیو موجود ہے
         if (room.status === 'ready' && room.isPlaying) {
-            room.currentTime += 1; // 1 سیکنڈ آگے بڑھاؤ
+            room.currentTime += 1;
         }
     }
 }, 1000);
