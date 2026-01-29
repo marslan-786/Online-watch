@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const path = require('path');
 const fs = require('fs');
-const youtubedl = require('yt-dlp-exec');
+const { spawn } = require('child_process'); // 🔥 Native Command Runner
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -22,59 +22,21 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/stream', express.static(DOWNLOAD_DIR));
 
-// === GLOBAL STATE ===
+// === GLOBAL ROOMS ===
 let rooms = {};
 
-// === API ENDPOINTS ===
-app.get('/api/room/:roomId/status', (req, res) => {
-    const { roomId } = req.params;
-    if(rooms[roomId]) res.json({ success: true, state: rooms[roomId] });
-    else res.status(404).json({ success: false, error: "Room not found" });
-});
-
+// === API CONTROLLER ===
 app.post('/api/room/:roomId/control', (req, res) => {
     const { roomId } = req.params;
     const { action, time } = req.body;
-    
     const room = rooms[roomId];
     if(!room) return res.status(404).json({ error: "No Room" });
 
-    if (action === 'play') {
-        room.isPlaying = true;
-        room.status = 'playing';
-        io.to(roomId).emit('force_sync', { action: 'play', time: room.currentTime });
-    } 
-    else if (action === 'pause') {
-        room.isPlaying = false;
-        room.status = 'paused';
-        io.to(roomId).emit('force_sync', { action: 'pause', time: room.currentTime });
-    } 
-    else if (action === 'seek') {
-        room.currentTime = parseFloat(time);
-        io.to(roomId).emit('force_sync', { action: 'seek', time: room.currentTime });
-    }
+    if (action === 'play') { room.isPlaying = true; io.to(roomId).emit('force_sync', { action: 'play', time: room.currentTime }); } 
+    else if (action === 'pause') { room.isPlaying = false; io.to(roomId).emit('force_sync', { action: 'pause', time: room.currentTime }); } 
+    else if (action === 'seek') { room.currentTime = parseFloat(time); io.to(roomId).emit('force_sync', { action: 'seek', time: room.currentTime }); }
 
-    res.json({ success: true, newState: room });
-});
-
-app.get('/video/:filename', (req, res) => {
-    const filePath = path.join(DOWNLOAD_DIR, req.params.filename);
-    if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
-    const stat = fs.statSync(filePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-    if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = (end - start) + 1;
-        const file = fs.createReadStream(filePath, { start, end });
-        res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${fileSize}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4' });
-        file.pipe(res);
-    } else {
-        res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' });
-        fs.createReadStream(filePath).pipe(res);
-    }
+    res.json({ success: true });
 });
 
 // === SOCKET LOGIC ===
@@ -83,14 +45,12 @@ io.on('connection', (socket) => {
     socket.on('join_room', (roomId) => {
         socket.join(roomId);
         if (!rooms[roomId]) {
-            rooms[roomId] = { 
-                admins: [socket.id], users: [], videoFilename: null, 
-                currentTime: 0, isPlaying: false, status: 'idle', duration: 0
-            };
+            rooms[roomId] = { admins: [socket.id], users: [], videoFilename: null, currentTime: 0, isPlaying: false, status: 'idle' };
         } else {
             if(!rooms[roomId].users.includes(socket.id)) rooms[roomId].users.push(socket.id);
         }
-
+        
+        // Inject State
         const room = rooms[roomId];
         socket.emit('inject_state', {
             time: room.currentTime,
@@ -100,81 +60,117 @@ io.on('connection', (socket) => {
         });
     });
 
-    socket.on('audio_stream', (data) => {
-        socket.to(data.roomId).emit('global_voice', data.audioChunk);
+    // --- 🎤 AUDIO STREAM ---
+    socket.on('audio_stream', (data) => socket.to(data.roomId).emit('global_voice', data.audioChunk));
+
+    // --- 🔍 GET INFO (Native Spawn) ---
+    socket.on('get_info', (data) => {
+        console.log(`[INFO START] Fetching metadata: ${data.url}`);
+        
+        // Using python directly for raw output
+        const yt = spawn('yt-dlp', [
+            data.url, 
+            '--dump-single-json', 
+            '--no-warnings', 
+            '--force-ipv4', // 🔥 Force IPv4 to prevent hanging
+            '--extractor-args', 'youtube:player_client=android'
+        ]);
+
+        let rawData = '';
+        let errorData = '';
+
+        yt.stdout.on('data', (chunk) => rawData += chunk);
+        yt.stderr.on('data', (chunk) => {
+            errorData += chunk;
+            console.log(`[YT LOG]: ${chunk}`); // Hard Print Logs
+        });
+
+        yt.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    const info = JSON.parse(rawData);
+                    console.log(`[INFO SUCCESS] Found: ${info.title}`);
+                    socket.emit('info_result', { title: info.title, url: data.url, duration: info.duration });
+                } catch (e) {
+                    console.error("[JSON PARSE ERROR]", e);
+                    socket.emit('status_msg', "❌ Error parsing metadata");
+                }
+            } else {
+                console.error(`[INFO FAIL] Exit Code: ${code}`);
+                socket.emit('status_msg', "❌ Failed to fetch video info. Check logs.");
+            }
+        });
     });
 
-    // --- 🔥 FIXED DOWNLOAD LOGIC ---
-    socket.on('start_download', async (data) => {
+    // --- ⬇️ DOWNLOAD (Progress Bar Logic) ---
+    socket.on('start_download', (data) => {
         const room = rooms[data.roomId];
         if(!room) return;
-        
-        console.log(`[START] Downloading: ${data.url} Quality: ${data.quality}`);
-        io.to(data.roomId).emit('status_msg', "⬇️ Server Downloading (Check Logs)...");
-        
+
         const filename = `${uuidv4()}.mp4`;
         const outputPath = path.join(DOWNLOAD_DIR, filename);
         
-        // Simpler, more robust formats
+        // Format Logic
         let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${data.quality}][ext=mp4]/best`;
         if (data.quality === 'audio') format = 'bestaudio/best';
 
-        try {
-            await youtubedl(data.url, {
-                output: outputPath,
-                format: format,
-                noCheckCertificates: true,
-                noWarnings: true,
-                preferFreeFormats: true,
-                extractorArgs: "youtube:player_client=android", // Anti-block
-                verbose: true // 🔥 Show logs in Railway
-            });
-            
-            console.log(`[SUCCESS] File saved: ${filename}`);
-            
-            room.videoFilename = filename;
-            room.currentTime = 0;
-            room.isPlaying = true;
-            room.status = 'playing';
-            room.duration = data.duration || 3600;
+        console.log(`[DOWNLOAD START] ${data.url} -> ${filename}`);
 
-            io.to(data.roomId).emit('ready_to_play', { filename });
-        } catch (e) {
-            console.error("[ERROR] Download Failed:", e);
-            io.to(data.roomId).emit('status_msg', "❌ Download Failed! Check Server Logs.");
-        }
-    });
+        const yt = spawn('yt-dlp', [
+            data.url,
+            '-f', format,
+            '-o', outputPath,
+            '--force-ipv4',  // 🔥 Critical for Railway
+            '--newline',     // 🔥 Critical for Progress Bar Parsing
+            '--no-warnings',
+            '--extractor-args', 'youtube:player_client=android' // 🔥 Anti-Block
+        ]);
 
-    socket.on('get_info', async (data) => {
-        console.log(`[INFO] Fetching metadata for ${data.url}`);
-        try {
-            const out = await youtubedl(data.url, { 
-                dumpSingleJson: true, 
-                noWarnings: true,
-                noCheckCertificates: true,
-                extractorArgs: "youtube:player_client=android"
-            });
-            socket.emit('info_result', { title: out.title, url: data.url, duration: out.duration });
-        } catch (e) { 
-            console.error("[INFO ERROR]", e.message);
-            socket.emit('status_msg', "❌ Invalid Link or Server Blocked"); 
-        }
+        yt.stdout.on('data', (chunk) => {
+            const line = chunk.toString();
+            // console.log(`[YT OUT]: ${line}`); // Uncomment for EXTREME logging
+
+            // Parse Percentage: "[download]  45.5% of 100MiB"
+            const match = line.match(/\[download\]\s+(\d+\.\d+)%/);
+            if (match && match[1]) {
+                const percent = parseFloat(match[1]);
+                // Emit progress to Room
+                io.to(data.roomId).emit('download_progress', { percent: percent });
+            }
+        });
+
+        yt.stderr.on('data', (chunk) => {
+            console.error(`[YT ERROR/LOG]: ${chunk.toString()}`); // Hard print errors
+        });
+
+        yt.on('close', (code) => {
+            if (code === 0) {
+                console.log(`[DOWNLOAD COMPLETE] File: ${filename}`);
+                room.videoFilename = filename;
+                room.currentTime = 0;
+                room.isPlaying = true;
+                room.status = 'playing';
+                
+                io.to(data.roomId).emit('download_complete', { filename });
+            } else {
+                console.error(`[DOWNLOAD FAILED] Code: ${code}`);
+                io.to(data.roomId).emit('status_msg', "❌ Download Failed. Check Server Console.");
+            }
+        });
     });
 });
 
-// Master Clock
+// Clock Sync
 setInterval(() => {
     for (const id in rooms) {
         const room = rooms[id];
         if (room.status === 'playing' && room.videoFilename) {
             room.currentTime += 1;
-            if (Math.floor(room.currentTime) % 5 === 0) {
-                 io.to(id).emit('clock_sync', { time: room.currentTime });
-            }
+            if (Math.floor(room.currentTime) % 5 === 0) io.to(id).emit('clock_sync', { time: room.currentTime });
         }
     }
 }, 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`API Server Active on ${PORT}`);
+    console.log(`🚀 API Server Running on ${PORT}`);
 });
