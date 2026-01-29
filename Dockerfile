@@ -1,11 +1,10 @@
-# 1. Base Image (Heavy & Stable)
-FROM node:18-bullseye
+# 1. Base Image (Debian Bookworm has Python 3.11+)
+FROM node:18-bookworm
 
-# 2. Install System Dependencies (Python + FFmpeg)
-# FFmpeg بہت ضروری ہے ویڈیو اور آڈیو کو مرج کرنے کے لیے
+# 2. Install System Dependencies (FFmpeg is Must)
 RUN apt-get update && \
     apt-get install -y python3 python3-pip ffmpeg && \
-    ln -s /usr/bin/python3 /usr/bin/python
+    ln -sf /usr/bin/python3 /usr/bin/python
 
 # 3. Work Directory
 WORKDIR /app
