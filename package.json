@@ -1,16 +1,20 @@
 {
-  "name": "silent-cinema-pro",
-  "version": "1.0.0",
-  "description": "Professional Watch Party App",
+  "name": "silent-cinema-ultimate",
+  "version": "3.0.0",
+  "description": "High Performance Watch Party Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.2",
+    "yt-dlp-exec": "^1.0.2", 
+    "peer": "^1.0.0",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.0"
   },
   "engines": {
-    "node": ">=14.x"
+    "node": ">=18.x"
   }
 }
