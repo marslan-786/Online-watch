@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silent Cinema - Elite Watch Party</title>
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Modern Dark Theme */
+        :root { --primary: #e50914; --dark: #141414; --gray: #333; --text: #fff; }
+        body { background-color: var(--dark); color: var(--text); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        
+        /* Lobby */
+        #lobby { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; width: 100%; }
+        .lobby-box { background: rgba(0,0,0,0.8); padding: 40px; border-radius: 10px; text-align: center; width: 90%; max-width: 500px; border: 1px solid #333; }
+        input { width: 100%; padding: 15px; margin: 10px 0; background: #222; border: 1px solid #444; color: white; border-radius: 4px; box-sizing: border-box; }
+        .btn { background: var(--primary); color: white; border: none; padding: 12px 25px; cursor: pointer; font-size: 16px; border-radius: 4px; width: 100%; transition: 0.2s; }
+        .btn:hover { background: #b20710; }
+
+        /* Cinema Room */
+        #cinema { display: none; width: 100%; max-width: 1200px; padding: 20px; box-sizing: border-box; }
+        .video-wrapper { position: relative; box-shadow: 0 0 50px rgba(0,0,0,0.9); }
+        
+        /* Block Layer for Non-Admins */
+        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; display: none; }
+
+        /* User List Panel */
+        .controls-panel { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+        .users-list { flex: 1; background: #1f1f1f; padding: 20px; border-radius: 8px; min-width: 300px; max-height: 400px; overflow-y: auto; }
+        .user-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #333; }
+        .tag-admin { background: var(--primary); font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 5px; }
+        .btn-promote { background: #007bff; border: none; color: white; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; }
+
+        /* Notifications */
+        #toast { position: fixed; top: 20px; right: 20px; background: var(--primary); padding: 15px 25px; border-radius: 5px; display: none; z-index: 100; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body>
+
+    <div id="toast">Notification</div>
+
+    <div id="lobby">
+        <div class="lobby-box">
+            <h1 style="margin-bottom: 5px;"><i class="fas fa-film"></i> Silent Cinema</h1>
+            <p style="color: #aaa; margin-bottom: 20px;">Paste a Link & Watch Together</p>
+            <input type="text" id="urlInput" placeholder="Paste YouTube or MP4 Link here...">
+            <button class="btn" onclick="createRoom()">Create & Watch</button>
+        </div>
+    </div>
+
+    <div id="cinema">
+        <div class="video-wrapper">
+            <div id="glass-shield" title="Only Admins can control playback"></div>
+            <video id="player" playsinline controls style="width: 100%;"></video>
+        </div>
+
+        <div class="controls-panel">
+            <div class="users-list">
+                <h3 style="margin-top: 0;">Connected Users <span id="user-count" style="color: #aaa; font-size: 14px;">(0)</span></h3>
+                <div id="users-container"></div>
+            </div>
+            
+            <div style="flex: 1; background: #1f1f1f; padding: 20px; border-radius: 8px;">
+                <h3>Room Link</h3>
+                <input type="text" id="share-link" readonly onclick="this.select();">
+                <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('share-link').value); alert('Copied!')">Copy Link</button>
+                <p style="font-size: 12px; color: #777; margin-top: 10px;">Send this link to your friends to join.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+    <script>
+        const socket = io();
+        const urlParams = new URLSearchParams(window.location.search);
+        let roomId = urlParams.get('room');
+        
+        let player;
+        let myId = '';
+        let amIAdmin = false;
+        let isSyncing = false; // Loop prevention flag
+
+        // --- Setup Logic ---
+        if (roomId) {
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('cinema').style.display = 'block';
+            document.getElementById('share-link').value = window.location.href;
+            initPlayer();
+            socket.emit('join_room', roomId);
+        }
+
+        function createRoom() {
+            const link = document.getElementById('urlInput').value;
+            if(!link) return alert("Please enter a link");
+            
+            roomId = Math.random().toString(36).substring(7);
+            
+            // Determine type
+            let type = 'direct';
+            if(link.includes('youtube') || link.includes('youtu.be')) type = 'youtube';
+
+            const newUrl = `?room=${roomId}`;
+            window.history.pushState({}, '', newUrl);
+            
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('cinema').style.display = 'block';
+            document.getElementById('share-link').value = window.location.href;
+
+            initPlayer();
+            socket.emit('join_room', roomId);
+            
+            // As creator, set the video immediately
+            setTimeout(() => {
+                socket.emit('video_action', { roomId, type: 'change', url: link, videoType: type });
+            }, 1000);
+        }
+
+        function initPlayer() {
+            player = new Plyr('#player', {
+                controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
+            });
+
+            // --- Events (Send to Server) ---
+            player.on('play', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'play' }); });
+            player.on('pause', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'pause' }); });
+            player.on('seeked', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'seek', time: player.currentTime }); });
+            
+            // Regular sync update for late joiners
+            setInterval(() => {
+                if(amIAdmin && !player.paused) {
+                    socket.emit('time_update', { roomId, time: player.currentTime });
+                }
+            }, 2000);
+        }
+
+        // --- Socket Listeners (Receive from Server) ---
+
+        socket.on('connect', () => { myId = socket.id; });
+
+        // 1. Initial Load for new user
+        socket.on('sync_initial', (data) => {
+            if(data.videoUrl) loadVideo(data.videoUrl, data.videoType);
+            player.currentTime = data.time;
+            if(data.isPlaying) player.play();
+        });
+
+        // 2. Real-time Action Sync
+        socket.on('perform_action', (data) => {
+            isSyncing = true; // Flag to prevent loop
+            
+            if (data.type === 'change') {
+                loadVideo(data.url, data.videoType);
+            } else if (data.type === 'play') {
+                player.play();
+            } else if (data.type === 'pause') {
+                player.pause();
+            } else if (data.type === 'seek') {
+                player.currentTime = data.time;
+            }
+
+            setTimeout(() => { isSyncing = false; }, 500);
+        });
+
+        // 3. User & Admin List Update
+        socket.on('update_room_data', (room) => {
+            const listContainer = document.getElementById('users-container');
+            listContainer.innerHTML = '';
+            document.getElementById('user-count').innerText = `(${room.users.length})`;
+
+            // Check if I am an Admin
+            amIAdmin = room.admins.includes(myId);
+
+            // Controls Lock Logic
+            const shield = document.getElementById('glass-shield');
+            if (amIAdmin) shield.style.display = 'none';
+            else shield.style.display = 'block';
+
+            // Render List
+            room.users.forEach(userId => {
+                const isAdmin = room.admins.includes(userId);
+                const isMe = (userId === myId);
+
+                const div = document.createElement('div');
+                div.className = 'user-row';
+                
+                let html = `<span>${isMe ? 'You' : 'User'} <span style="font-size:10px; color:#777;">(${userId.substr(0,4)})</span>`;
+                if(isAdmin) html += `<span class="tag-admin">ADMIN</span>`;
+                html += `</span>`;
+
+                // Show "Make Admin" button ONLY if: I am Admin AND Target is NOT Admin
+                if(amIAdmin && !isAdmin) {
+                    html += `<button class="btn-promote" onclick="promote('${userId}')">Make Admin</button>`;
+                }
+
+                div.innerHTML = html;
+                listContainer.appendChild(div);
+            });
+        });
+
+        socket.on('notification', (msg) => {
+            const t = document.getElementById('toast');
+            t.innerText = msg; t.style.display = 'block';
+            setTimeout(()=> t.style.display='none', 3000);
+        });
+
+        // --- Helpers ---
+        function loadVideo(url, type) {
+            let source = { type: 'video', sources: [] };
+            if(type === 'youtube') source.sources.push({ src: url, provider: 'youtube' });
+            else source.sources.push({ src: url, type: 'video/mp4' });
+            player.source = source;
+        }
+
+        window.promote = function(targetId) {
+            socket.emit('promote_user', { roomId, targetUserId: targetId });
+        }
+    </script>
+</body>
+</html>
