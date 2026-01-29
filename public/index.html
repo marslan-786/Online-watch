@@ -2,147 +2,228 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Cinema PRO</title>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --primary: #e50914; --dark: #000; --gray: #1a1a1a; --text: #fff; }
-        body { background-color: var(--dark); color: var(--text); font-family: sans-serif; margin: 0; height: 100vh; overflow: hidden; }
+        body { background-color: var(--dark); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; height: 100vh; overflow: hidden; user-select: none; }
+        
         .hidden { display: none !important; }
-        
-        .center-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; }
-        
-        .box { background: var(--gray); padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; text-align: center; border: 1px solid #333; }
-        input { width: 100%; padding: 12px; margin: 15px 0; background: #111; border: 1px solid #444; color: white; border-radius: 5px; }
-        .btn { background: var(--primary); color: white; border: none; padding: 12px 20px; cursor: pointer; width: 100%; border-radius: 5px; font-weight: bold; margin-top: 5px; }
-        
-        /* Quality Modal */
-        #quality-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 200; display: flex; align-items: center; justify-content: center; }
+        .center-flex { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; }
+
+        /* --- BOX STYLES --- */
+        .box { background: var(--gray); padding: 30px; border-radius: 12px; width: 90%; max-width: 450px; text-align: center; border: 1px solid #333; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+        input { width: 100%; padding: 12px; margin: 15px 0; background: #111; border: 1px solid #444; color: white; border-radius: 5px; text-align: center; }
+        .btn { background: var(--primary); color: white; border: none; padding: 12px 20px; cursor: pointer; width: 100%; border-radius: 5px; font-weight: bold; font-size: 16px; margin-top: 10px; transition: 0.2s; }
+        .btn:active { transform: scale(0.98); }
+        .btn-sec { background: #333; border: 1px solid #555; }
+
+        /* --- QUALITY MODAL --- */
+        #quality-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 200; display: flex; align-items: center; justify-content: center; }
         .q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
-        .q-btn { background: #333; color: white; border: 1px solid #555; padding: 15px; cursor: pointer; border-radius: 5px; transition: 0.2s; }
+        .q-btn { background: #222; color: white; border: 1px solid #444; padding: 15px; cursor: pointer; border-radius: 5px; }
         .q-btn:hover { background: var(--primary); border-color: var(--primary); }
 
-        #player-screen { height: 100%; width: 100%; position: relative; }
-        video { width: 100%; height: 100%; }
-        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; display: none; }
+        /* --- PLAYER SCREEN --- */
+        #player-screen { height: 100%; width: 100%; position: relative; display: flex; align-items: center; justify-content: center; background: black; }
+        .video-wrapper { width: 100%; max-width: 100%; aspect-ratio: 16/9; max-height: 100vh; }
+        
+        /* --- ADMIN ICONS (Top Right/Left) --- */
+        .top-icons { position: absolute; top: 20px; right: 20px; z-index: 100; display: flex; gap: 15px; }
+        .icon-btn { width: 45px; height: 45px; background: rgba(0,0,0,0.6); border: 1px solid #444; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(5px); font-size: 18px; }
+        .icon-btn:hover { background: var(--primary); }
+
+        /* --- MIC BUTTON (Bottom Right) --- */
+        .mic-wrapper { position: absolute; bottom: 30px; right: 30px; z-index: 100; }
+        #mic-btn { width: 60px; height: 60px; background: #d32f2f; border-radius: 50%; border: none; color: white; font-size: 24px; cursor: pointer; box-shadow: 0 0 20px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; }
+        #mic-btn.active { background: #2e7d32; box-shadow: 0 0 20px #2e7d32; }
+
+        /* --- DOUBLE TAP OVERLAY --- */
+        .tap-overlay { position: absolute; top: 0; height: 100%; width: 40%; z-index: 10; }
+        .tap-left { left: 0; }
+        .tap-right { right: 0; }
+        .tap-anim { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 40px; color: rgba(255,255,255,0.8); display: none; pointer-events: none; z-index: 20; }
+
+        /* --- SIDE PANEL (Users) --- */
+        #user-panel { position: fixed; top: 0; right: -250px; width: 250px; height: 100%; background: rgba(20,20,20,0.95); z-index: 300; transition: 0.3s; padding: 20px; border-left: 1px solid #333; }
+        #user-panel.open { right: 0; }
+        .user-row { padding: 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
+
+        /* Admin Visibility */
+        .admin-only { display: none !important; }
+        body.is-admin .admin-only { display: flex !important; }
+        
+        /* Glass Shield for Non-Admins */
+        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; display: none; }
         body:not(.is-admin) #glass-shield { display: block; }
+
     </style>
 </head>
 <body>
 
-    <div id="lobby-screen" class="center-screen">
+    <div id="lobby-screen" class="center-flex">
         <div class="box">
-            <h2>🎬 PRO Download Engine</h2>
-            <input type="text" id="linkInput" placeholder="Paste YouTube Link...">
-            <button class="btn" onclick="fetchInfo()">Get Video</button>
+            <h1 style="color:var(--primary); margin:0;">🎥 CINEMA HUB</h1>
+            <p style="color:#aaa;">Paste Link > Select Quality > Watch Together</p>
+            <input type="text" id="linkInput" placeholder="Paste YouTube Link here...">
+            <button class="btn" onclick="fetchInfo()">Generate</button>
             <p id="status-text" style="color:#aaa; font-size:12px; margin-top:10px;"></p>
         </div>
     </div>
 
     <div id="quality-modal" class="hidden">
         <div class="box">
-            <h3 id="vid-title">Select Quality</h3>
-            <img id="vid-thumb" src="" style="width:100%; border-radius:5px; margin-bottom:10px;">
+            <h3 id="vid-title" style="margin-bottom: 5px;">Select Quality</h3>
             <div class="q-grid">
-                <button class="q-btn" onclick="selectQuality('2160')">4K (Ultra)</button>
                 <button class="q-btn" onclick="selectQuality('1080')">1080p (FHD)</button>
                 <button class="q-btn" onclick="selectQuality('720')">720p (HD)</button>
                 <button class="q-btn" onclick="selectQuality('480')">480p (SD)</button>
-                <button class="q-btn" onclick="selectQuality('360')">360p (Data Saver)</button>
                 <button class="q-btn" onclick="selectQuality('audio')">Audio Only</button>
             </div>
-            <button class="btn" onclick="closeModal()" style="background:#444; margin-top:15px;">Cancel</button>
+            <button class="btn btn-sec" onclick="document.getElementById('quality-modal').classList.add('hidden')">Cancel</button>
+        </div>
+    </div>
+
+    <div id="link-screen" class="center-flex hidden">
+        <div class="box">
+            <i class="fas fa-check-circle" style="color: #00e676; font-size: 50px; margin-bottom: 20px;"></i>
+            <h3>Link Generated!</h3>
+            <p style="color:#aaa;">Video is ready on server.</p>
+            
+            <input type="text" id="share-link-input" readonly>
+            
+            <button class="btn btn-sec" onclick="copyLink()">
+                <i class="fas fa-copy"></i> Copy Link
+            </button>
+            
+            <button class="btn" onclick="enterCinema()">
+                <i class="fas fa-play"></i> Open Player
+            </button>
         </div>
     </div>
 
     <div id="player-screen" class="hidden">
-        <div id="glass-shield"></div>
-        <video id="player" playsinline controls></video>
+        
+        <div class="top-icons admin-only">
+            <div class="icon-btn" onclick="copyLink()" title="Copy Link"><i class="fas fa-link"></i></div>
+            <div class="icon-btn" onclick="toggleUserPanel()" title="Users"><i class="fas fa-users"></i></div>
+        </div>
+
+        <div class="video-wrapper">
+            <div id="glass-shield" title="Only Admin can control"></div>
+            
+            <div class="tap-overlay tap-left" id="tap-back">
+                <div class="tap-anim" style="left: 20%;"><i class="fas fa-backward"></i> -10s</div>
+            </div>
+            <div class="tap-overlay tap-right" id="tap-fwd">
+                <div class="tap-anim" style="right: 20%;">+10s <i class="fas fa-forward"></i></div>
+            </div>
+
+            <video id="player" playsinline controls></video>
+        </div>
+
+        <div class="mic-wrapper">
+            <button id="mic-btn" onclick="toggleMic()"><i class="fas fa-microphone-slash"></i></button>
+        </div>
+
+        <div id="user-panel">
+            <h3 style="margin-top:0;">Users <button onclick="toggleUserPanel()" style="float:right;background:none;border:none;color:white;">X</button></h3>
+            <div id="user-list"></div>
+        </div>
+
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+
     <script>
         const socket = io();
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
         let player, amIAdmin = false, isSyncing = false;
         let currentUrl = '';
+        let micOn = false;
 
+        // --- Flow Control ---
         if (roomId) {
+            // Joiner sees player directly (loading state handled by socket)
             document.getElementById('lobby-screen').classList.add('hidden');
+            document.getElementById('player-screen').classList.remove('hidden');
             socket.emit('join_room', roomId);
         }
 
-        // --- Step 1: Request Info ---
+        // 1. Fetch Info
         function fetchInfo() {
             const link = document.getElementById('linkInput').value;
-            if(!link) return alert("Enter Link");
+            if(!link) return alert("Paste a link first!");
+            document.getElementById('status-text').innerText = "Analyzing Link...";
             
-            document.getElementById('status-text').innerText = "Fetching Formats...";
-            
-            // Generate Room ID if new
             if(!roomId) {
                 roomId = Math.random().toString(36).substring(7);
                 window.history.pushState({}, '', `?room=${roomId}`);
                 socket.emit('join_room', roomId);
             }
-            
-            // Ask Server for Info
             socket.emit('get_video_info', { roomId, url: link });
         }
 
-        // --- Step 2: Show Quality Menu ---
         socket.on('show_quality_menu', (data) => {
             currentUrl = data.url;
-            document.getElementById('vid-title').innerText = data.title.substring(0, 30) + "...";
-            document.getElementById('vid-thumb').src = data.thumbnail;
+            document.getElementById('vid-title').innerText = data.title.substring(0, 30);
             document.getElementById('quality-modal').classList.remove('hidden');
-            document.getElementById('status-text').innerText = "";
         });
 
-        // --- Step 3: User Selected Quality ---
-        function selectQuality(quality) {
+        // 2. Select & Download
+        function selectQuality(q) {
             document.getElementById('quality-modal').classList.add('hidden');
-            document.getElementById('lobby-screen').classList.add('hidden');
-            document.getElementById('player-screen').classList.remove('hidden');
+            // Show Loading on Lobby
+            document.getElementById('status-text').innerText = "Downloading on Server... Please Wait ⏳";
+            document.getElementById('status-text').style.color = "#00e676";
             
-            // Show Loading...
-            const box = document.createElement('div');
-            box.id = 'loading-overlay';
-            box.style = 'position:absolute;top:0;left:0;width:100%;height:100%;background:black;color:white;display:flex;justify-content:center;align-items:center;z-index:100;';
-            box.innerHTML = '<h2>⬇️ Downloading on Server...</h2>';
-            document.body.appendChild(box);
-
-            socket.emit('start_download', { roomId, url: currentUrl, quality: quality });
+            socket.emit('start_download', { roomId, url: currentUrl, quality: q });
         }
 
-        function closeModal() {
-            document.getElementById('quality-modal').classList.add('hidden');
-        }
-
-        // --- Step 4: Download Complete -> Play ---
+        // 3. Download Complete -> Show Link Screen (For Admin)
         socket.on('download_complete', (data) => {
-            const overlay = document.getElementById('loading-overlay');
-            if(overlay) overlay.remove();
-
-            initPlayer(data.filename);
+            if(amIAdmin) {
+                document.getElementById('lobby-screen').classList.add('hidden');
+                document.getElementById('link-screen').classList.remove('hidden');
+                document.getElementById('share-link-input').value = window.location.href;
+                
+                // Save filename for later
+                window.videoFile = data.filename;
+            } else {
+                // Users just get the player init
+                initPlayer(data.filename);
+            }
         });
 
-        socket.on('processing_msg', (msg) => {
-             const stat = document.getElementById('status-text');
-             if(stat) stat.innerText = msg;
-        });
-        
-        socket.on('error_msg', (msg) => alert(msg));
+        function enterCinema() {
+            document.getElementById('link-screen').classList.add('hidden');
+            document.getElementById('player-screen').classList.remove('hidden');
+            initPlayer(window.videoFile);
+        }
+
+        function copyLink() {
+            const link = window.location.href;
+            navigator.clipboard.writeText(link);
+            alert("Link Copied! Share it.");
+        }
 
         // --- Player Logic ---
         function initPlayer(filename) {
-            player = new Plyr('#player', { controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] });
-            player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
+            if(player) return;
             
-            // Sync Events
+            player = new Plyr('#player', {
+                controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
+                ratio: '16:9'
+            });
+
+            player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
+
+            // Sync Logic
             player.on('play', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'play' }); });
             player.on('pause', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'pause' }); });
             player.on('seeked', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'seek', time: player.currentTime }); });
@@ -150,18 +231,25 @@
             setInterval(() => { if(amIAdmin && !player.paused) socket.emit('time_update', { roomId, time: player.currentTime }); }, 2000);
         }
 
+        // --- Socket Events ---
         socket.on('update_room_data', (room) => {
             amIAdmin = room.admins.includes(socket.id);
             if(amIAdmin) document.body.classList.add('is-admin');
             
-            if(room.status === 'ready' && !player) {
-                // Late joiner logic
-                document.getElementById('lobby-screen').classList.add('hidden');
-                document.getElementById('player-screen').classList.remove('hidden');
-                initPlayer(room.videoFilename);
+            // If room is ready and user is late
+            if(room.status === 'ready' && !player && !document.getElementById('link-screen').classList.contains('hidden') === false) {
+                 document.getElementById('lobby-screen').classList.add('hidden');
+                 document.getElementById('player-screen').classList.remove('hidden');
+                 initPlayer(room.videoFilename);
             }
+
+            // Update User List
+            const list = document.getElementById('user-list');
+            list.innerHTML = room.users.map(u => 
+                `<div class="user-row"><span>User ${u.substr(0,4)}</span>${room.admins.includes(u)?'⭐':''}</div>`
+            ).join('');
         });
-        
+
         socket.on('perform_action', (data) => {
             isSyncing = true;
             if (data.type === 'play') player.play();
@@ -169,6 +257,52 @@
             else if (data.type === 'seek') player.currentTime = data.time;
             setTimeout(() => isSyncing = false, 500);
         });
+
+        // --- Double Tap Logic ---
+        let lastTapLeft = 0, lastTapRight = 0;
+        
+        document.getElementById('tap-back').addEventListener('click', (e) => handleTap('back'));
+        document.getElementById('tap-fwd').addEventListener('click', (e) => handleTap('fwd'));
+
+        function handleTap(dir) {
+            const now = new Date().getTime();
+            const last = dir === 'back' ? lastTapLeft : lastTapRight;
+            
+            if (now - last < 400) {
+                // Double Tap Detected
+                if(amIAdmin) {
+                    if(dir === 'back') player.rewind(10);
+                    else player.forward(10);
+                    
+                    // Show Animation
+                    const anim = dir === 'back' ? document.querySelector('#tap-back .tap-anim') : document.querySelector('#tap-fwd .tap-anim');
+                    anim.style.display = 'block';
+                    setTimeout(() => anim.style.display = 'none', 600);
+                } else {
+                    alert("Only Admin can seek!");
+                }
+            }
+            if(dir === 'back') lastTapLeft = now; else lastTapRight = now;
+        }
+
+        // --- Mic Logic ---
+        function toggleMic() {
+            const btn = document.getElementById('mic-btn');
+            micOn = !micOn;
+            if(micOn) {
+                btn.classList.add('active');
+                btn.innerHTML = '<i class="fas fa-microphone"></i>';
+                // Here you would hook into PeerJS stream
+            } else {
+                btn.classList.remove('active');
+                btn.innerHTML = '<i class="fas fa-microphone-slash"></i>';
+            }
+        }
+
+        function toggleUserPanel() {
+            document.getElementById('user-panel').classList.toggle('open');
+        }
+
     </script>
 </body>
 </html>
