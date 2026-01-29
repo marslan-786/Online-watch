@@ -1,28 +1,32 @@
 # 1. Base Image (Debian Bookworm has Python 3.11+)
 FROM node:18-bookworm
 
-# 2. Install System Dependencies (FFmpeg is Must)
+# 2. Install System Dependencies (Python + FFmpeg)
 RUN apt-get update && \
     apt-get install -y python3 python3-pip ffmpeg && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-# 3. Work Directory
+# 3. 🔥 INSTALL YT-DLP (CRITICAL FIX)
+# یہ لائن مسنگ تھی، اس لیے ENOENT ایرر آ رہا تھا
+RUN pip3 install yt-dlp --break-system-packages
+
+# 4. Work Directory
 WORKDIR /app
 
-# 4. Copy Package Files
+# 5. Copy Package Files
 COPY package*.json ./
 
-# 5. Install Node Dependencies
+# 6. Install Node Dependencies
 RUN npm install
 
-# 6. Copy Source Code
+# 7. Copy Source Code
 COPY . .
 
-# 7. Create Downloads Folder (For Volume Mounting)
+# 8. Create Downloads Folder (For Volume Mounting)
 RUN mkdir -p /app/downloads
 
-# 8. Expose Port
+# 9. Expose Port
 EXPOSE 3000
 
-# 9. Start Command
+# 10. Start Command
 CMD ["node", "server.js"]
