@@ -3,292 +3,172 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Silent Cinema PRO</title>
+    <title>Cinema PRO</title>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --primary: #e50914; --dark: #000; --gray: #1a1a1a; --text: #fff; }
-        body { background-color: var(--dark); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; height: 100vh; overflow: hidden; }
-        
+        body { background-color: var(--dark); color: var(--text); font-family: sans-serif; margin: 0; height: 100vh; overflow: hidden; }
         .hidden { display: none !important; }
-        .full-screen-center { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; }
         
-        /* Lobby */
-        .box { background: var(--gray); padding: 40px; border-radius: 12px; width: 90%; max-width: 500px; text-align: center; border: 1px solid #333; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        input { width: 100%; padding: 15px; margin: 20px 0; background: #111; border: 1px solid #444; color: white; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-        .btn { background: var(--primary); color: white; border: none; padding: 15px 30px; cursor: pointer; font-size: 16px; border-radius: 6px; width: 100%; font-weight: bold; transition: 0.3s; }
-        .btn:hover { background: #ff1f2f; transform: scale(1.02); }
+        .center-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; }
+        
+        .box { background: var(--gray); padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; text-align: center; border: 1px solid #333; }
+        input { width: 100%; padding: 12px; margin: 15px 0; background: #111; border: 1px solid #444; color: white; border-radius: 5px; }
+        .btn { background: var(--primary); color: white; border: none; padding: 12px 20px; cursor: pointer; width: 100%; border-radius: 5px; font-weight: bold; margin-top: 5px; }
+        
+        /* Quality Modal */
+        #quality-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 200; display: flex; align-items: center; justify-content: center; }
+        .q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+        .q-btn { background: #333; color: white; border: 1px solid #555; padding: 15px; cursor: pointer; border-radius: 5px; transition: 0.2s; }
+        .q-btn:hover { background: var(--primary); border-color: var(--primary); }
 
-        /* Downloading Screen */
-        #download-screen h2 { color: var(--primary); animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-
-        /* Player */
-        #player-screen { position: relative; height: 100%; width: 100%; background: black; }
-        .video-container { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-        video { max-height: 100vh; width: 100%; }
-
-        /* Overlays */
+        #player-screen { height: 100%; width: 100%; position: relative; }
+        video { width: 100%; height: 100%; }
         #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; display: none; }
         body:not(.is-admin) #glass-shield { display: block; }
-
-        /* Floating Controls */
-        .controls-layer { position: absolute; bottom: 30px; right: 30px; display: flex; gap: 15px; z-index: 100; }
-        .float-btn { width: 50px; height: 50px; border-radius: 50%; border: none; background: #333; color: white; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 15px rgba(0,0,0,0.5); transition: 0.2s; }
-        .float-btn:hover { background: #555; }
-        .float-btn.active { background: #00e676; color: black; }
-        
-        #admin-panel { position: fixed; top: 0; right: -320px; width: 320px; height: 100%; background: rgba(20,20,20,0.95); z-index: 200; padding: 20px; transition: 0.3s; border-left: 1px solid #333; backdrop-filter: blur(10px); }
-        #admin-panel.open { right: 0; }
-        
-        .user-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #333; }
-        .badge { font-size: 10px; padding: 3px 6px; border-radius: 4px; background: #333; margin-left: 5px; }
-        .badge-admin { background: var(--primary); }
     </style>
 </head>
 <body>
 
-    <div id="lobby-screen" class="full-screen-center">
+    <div id="lobby-screen" class="center-screen">
         <div class="box">
-            <h1><i class="fas fa-server"></i> PRO CINEMA</h1>
-            <p style="color: #aaa;">Server-Side Rendering • No Ads • 4K Support</p>
-            <input type="text" id="linkInput" placeholder="Paste Video Link...">
-            <button class="btn" onclick="startProcess()">Start Server Download</button>
+            <h2>🎬 PRO Download Engine</h2>
+            <input type="text" id="linkInput" placeholder="Paste YouTube Link...">
+            <button class="btn" onclick="fetchInfo()">Get Video</button>
+            <p id="status-text" style="color:#aaa; font-size:12px; margin-top:10px;"></p>
         </div>
     </div>
 
-    <div id="download-screen" class="full-screen-center hidden">
+    <div id="quality-modal" class="hidden">
         <div class="box">
-            <h2><i class="fas fa-cog fa-spin"></i> Server is Processing...</h2>
-            <p>Downloading High Quality Video to Server Memory.</p>
-            <p>Please wait, all users will sync automatically.</p>
+            <h3 id="vid-title">Select Quality</h3>
+            <img id="vid-thumb" src="" style="width:100%; border-radius:5px; margin-bottom:10px;">
+            <div class="q-grid">
+                <button class="q-btn" onclick="selectQuality('2160')">4K (Ultra)</button>
+                <button class="q-btn" onclick="selectQuality('1080')">1080p (FHD)</button>
+                <button class="q-btn" onclick="selectQuality('720')">720p (HD)</button>
+                <button class="q-btn" onclick="selectQuality('480')">480p (SD)</button>
+                <button class="q-btn" onclick="selectQuality('360')">360p (Data Saver)</button>
+                <button class="q-btn" onclick="selectQuality('audio')">Audio Only</button>
+            </div>
+            <button class="btn" onclick="closeModal()" style="background:#444; margin-top:15px;">Cancel</button>
         </div>
     </div>
 
     <div id="player-screen" class="hidden">
-        <div class="video-container">
-            <div id="glass-shield" title="Only Admins Control Playback"></div>
-            <video id="player" playsinline controls></video>
-        </div>
-
-        <div class="controls-layer">
-            <button class="float-btn" id="mic-btn" onclick="toggleVoice()"><i class="fas fa-microphone-slash"></i></button>
-            <button class="float-btn hidden" id="admin-btn" onclick="toggleAdmin()"><i class="fas fa-users-cog"></i></button>
-        </div>
-
-        <div id="admin-panel">
-            <h3 style="margin-top:0;">Room Control</h3>
-            <div id="user-list"></div>
-            <br>
-            <input type="text" id="share-link" readonly style="font-size:12px; padding:8px;">
-            <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('share-link').value); alert('Copied')">Copy Link</button>
-            <button class="btn" onclick="toggleAdmin()" style="background:#333; margin-top:10px;">Close</button>
-        </div>
+        <div id="glass-shield"></div>
+        <video id="player" playsinline controls></video>
     </div>
-
-    <div id="audio-streams"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-
     <script>
         const socket = io();
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
-        
-        let player;
-        let myId = '';
-        let myPeerId = '';
-        let amIAdmin = false;
-        let isSyncing = false;
-        
-        // Voice Chat Variables
-        let peer;
-        let myStream;
-        const peers = {};
+        let player, amIAdmin = false, isSyncing = false;
+        let currentUrl = '';
 
-        // === INITIALIZATION ===
         if (roomId) {
             document.getElementById('lobby-screen').classList.add('hidden');
-            document.getElementById('download-screen').classList.remove('hidden'); // Assume downloading/loading first
             socket.emit('join_room', roomId);
-            initPeer();
-        } else {
-            // New Room
         }
 
-        function startProcess() {
+        // --- Step 1: Request Info ---
+        function fetchInfo() {
             const link = document.getElementById('linkInput').value;
             if(!link) return alert("Enter Link");
             
-            roomId = Math.random().toString(36).substring(7);
-            window.history.pushState({}, '', `?room=${roomId}`);
+            document.getElementById('status-text').innerText = "Fetching Formats...";
             
-            document.getElementById('lobby-screen').classList.add('hidden');
-            document.getElementById('download-screen').classList.remove('hidden');
+            // Generate Room ID if new
+            if(!roomId) {
+                roomId = Math.random().toString(36).substring(7);
+                window.history.pushState({}, '', `?room=${roomId}`);
+                socket.emit('join_room', roomId);
+            }
             
-            socket.emit('join_room', roomId);
-            initPeer();
-            
-            // Tell Server to Download
-            setTimeout(() => {
-                socket.emit('start_download', { roomId, url: link });
-            }, 1000);
+            // Ask Server for Info
+            socket.emit('get_video_info', { roomId, url: link });
         }
 
-        // === SOCKET EVENTS ===
-        
-        socket.on('connect', () => { myId = socket.id; });
-
-        socket.on('update_room_data', (room) => {
-            amIAdmin = room.admins.includes(myId);
-            
-            // UI Switch based on Status
-            if (room.status === 'ready' && document.getElementById('player-screen').classList.contains('hidden')) {
-                document.getElementById('download-screen').classList.add('hidden');
-                document.getElementById('player-screen').classList.remove('hidden');
-                initPlayer(room.videoFilename);
-                document.getElementById('share-link').value = window.location.href;
-            }
-
-            // Admin Controls
-            if (amIAdmin) {
-                document.body.classList.add('is-admin');
-                document.getElementById('admin-btn').classList.remove('hidden');
-            } else {
-                document.body.classList.remove('is-admin');
-                document.getElementById('admin-btn').classList.add('hidden');
-            }
-
-            // User List
-            const list = document.getElementById('user-list');
-            list.innerHTML = '';
-            room.users.forEach(uid => {
-                const isAdmin = room.admins.includes(uid);
-                const isMe = uid === myId;
-                list.innerHTML += `
-                    <div class="user-row">
-                        <span>${isMe ? 'You' : 'User'} ${isAdmin ? '<span class="badge badge-admin">ADMIN</span>' : ''}</span>
-                        ${amIAdmin && !isAdmin ? `<button onclick="promote('${uid}')" style="font-size:10px; cursor:pointer;">Promote</button>` : ''}
-                    </div>`;
-            });
+        // --- Step 2: Show Quality Menu ---
+        socket.on('show_quality_menu', (data) => {
+            currentUrl = data.url;
+            document.getElementById('vid-title').innerText = data.title.substring(0, 30) + "...";
+            document.getElementById('vid-thumb').src = data.thumbnail;
+            document.getElementById('quality-modal').classList.remove('hidden');
+            document.getElementById('status-text').innerText = "";
         });
 
+        // --- Step 3: User Selected Quality ---
+        function selectQuality(quality) {
+            document.getElementById('quality-modal').classList.add('hidden');
+            document.getElementById('lobby-screen').classList.add('hidden');
+            document.getElementById('player-screen').classList.remove('hidden');
+            
+            // Show Loading...
+            const box = document.createElement('div');
+            box.id = 'loading-overlay';
+            box.style = 'position:absolute;top:0;left:0;width:100%;height:100%;background:black;color:white;display:flex;justify-content:center;align-items:center;z-index:100;';
+            box.innerHTML = '<h2>⬇️ Downloading on Server...</h2>';
+            document.body.appendChild(box);
+
+            socket.emit('start_download', { roomId, url: currentUrl, quality: quality });
+        }
+
+        function closeModal() {
+            document.getElementById('quality-modal').classList.add('hidden');
+        }
+
+        // --- Step 4: Download Complete -> Play ---
         socket.on('download_complete', (data) => {
-            console.log("Download Done! Playing:", data.filename);
+            const overlay = document.getElementById('loading-overlay');
+            if(overlay) overlay.remove();
+
+            initPlayer(data.filename);
         });
 
-        socket.on('perform_action', (data) => {
-            isSyncing = true;
-            if (data.type === 'play') player.play();
-            if (data.type === 'pause') player.pause();
-            if (data.type === 'seek') player.currentTime = data.time;
-            setTimeout(() => isSyncing = false, 500);
+        socket.on('processing_msg', (msg) => {
+             const stat = document.getElementById('status-text');
+             if(stat) stat.innerText = msg;
         });
+        
+        socket.on('error_msg', (msg) => alert(msg));
 
-        // === PLAYER LOGIC ===
+        // --- Player Logic ---
         function initPlayer(filename) {
-            if(player) return; // Already inited
+            player = new Plyr('#player', { controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] });
+            player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
             
-            // Source is now the SERVER STREAM URL
-            const videoUrl = `/video/${filename}`;
-            
-            player = new Plyr('#player', {
-                controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
-            });
-
-            player.source = { type: 'video', sources: [{ src: videoUrl, type: 'video/mp4' }] };
-
             // Sync Events
             player.on('play', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'play' }); });
             player.on('pause', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'pause' }); });
             player.on('seeked', () => { if(amIAdmin && !isSyncing) socket.emit('video_action', { roomId, type: 'seek', time: player.currentTime }); });
 
-            setInterval(() => {
-                if(amIAdmin && !player.paused) socket.emit('time_update', { roomId, time: player.currentTime });
-            }, 2000);
+            setInterval(() => { if(amIAdmin && !player.paused) socket.emit('time_update', { roomId, time: player.currentTime }); }, 2000);
         }
 
-        // === REAL VOICE CHAT (WebRTC) ===
-        function initPeer() {
-            // Using a public PeerServer or your own hosted one? 
-            // Since we are on Railway, we can point to our own path if configured, 
-            // but for simplicity, we rely on PeerJS default cloud for signalling or local host if port 9000 is open.
-            // Let's try connecting to the server we made in server.js on /peerjs
+        socket.on('update_room_data', (room) => {
+            amIAdmin = room.admins.includes(socket.id);
+            if(amIAdmin) document.body.classList.add('is-admin');
             
-            // Note: In production (Railway), host should be location.hostname, port 443, path '/peerjs'
-            const isSecure = window.location.protocol === 'https:';
-            peer = new Peer(undefined, {
-                host: window.location.hostname,
-                port: window.location.port || (isSecure ? 443 : 3000),
-                path: '/peerjs'
-            });
-
-            peer.on('open', id => {
-                myPeerId = id;
-                socket.emit('join_voice', { roomId, peerId: id });
-            });
-
-            // Answer incoming calls
-            peer.on('call', call => {
-                call.answer(myStream);
-                const audio = document.createElement('audio');
-                call.on('stream', userVideoStream => {
-                    addAudioStream(audio, userVideoStream);
-                });
-            });
-
-            socket.on('user_joined_voice', userId => {
-                connectToNewUser(userId, myStream);
-            });
-        }
-
-        function toggleVoice() {
-            const btn = document.getElementById('mic-btn');
-            
-            if (myStream) {
-                // Turn Off
-                myStream.getTracks().forEach(track => track.stop());
-                myStream = null;
-                btn.classList.remove('active');
-                btn.innerHTML = '<i class="fas fa-microphone-slash"></i>';
-            } else {
-                // Turn On
-                navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
-                    myStream = stream;
-                    btn.classList.add('active');
-                    btn.innerHTML = '<i class="fas fa-microphone"></i>';
-                    
-                    // Re-announce to connect
-                    socket.emit('join_voice', { roomId, peerId: myPeerId });
-                }).catch(err => alert("Mic Access Denied"));
+            if(room.status === 'ready' && !player) {
+                // Late joiner logic
+                document.getElementById('lobby-screen').classList.add('hidden');
+                document.getElementById('player-screen').classList.remove('hidden');
+                initPlayer(room.videoFilename);
             }
-        }
-
-        function connectToNewUser(userId, stream) {
-            if(!stream) return;
-            const call = peer.call(userId, stream);
-            const audio = document.createElement('audio');
-            call.on('stream', userVideoStream => {
-                addAudioStream(audio, userVideoStream);
-            });
-        }
-
-        function addAudioStream(audio, stream) {
-            audio.srcObject = stream;
-            audio.addEventListener('loadedmetadata', () => {
-                audio.play();
-            });
-            document.getElementById('audio-streams').append(audio);
-        }
-
-        // Helpers
-        function toggleAdmin() {
-            document.getElementById('admin-panel').classList.toggle('open');
-        }
-        window.promote = (uid) => socket.emit('promote_user', { roomId, targetUserId: uid });
-
+        });
+        
+        socket.on('perform_action', (data) => {
+            isSyncing = true;
+            if (data.type === 'play') player.play();
+            else if (data.type === 'pause') player.pause();
+            else if (data.type === 'seek') player.currentTime = data.time;
+            setTimeout(() => isSyncing = false, 500);
+        });
     </script>
 </body>
 </html>
