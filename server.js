@@ -10,7 +10,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { 
     cors: { origin: "*" },
-    maxHttpBufferSize: 1e8 // 100MB buffer for audio chunks
+    maxHttpBufferSize: 1e8 
 });
 
 const PORT = process.env.PORT || 3000;
@@ -18,37 +18,26 @@ const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirnam
 
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
-app.use(express.json()); // To parse JSON bodies
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/stream', express.static(DOWNLOAD_DIR));
 
-// === 1. GLOBAL STATE (THE TRUTH) ===
+// === GLOBAL STATE ===
 let rooms = {};
 
-// === 2. API ENDPOINTS (CONTROL CENTER) ===
-
-// API: Get Room Status (For Injection)
+// === API ENDPOINTS ===
 app.get('/api/room/:roomId/status', (req, res) => {
     const { roomId } = req.params;
-    if(rooms[roomId]) {
-        res.json({ success: true, state: rooms[roomId] });
-    } else {
-        res.status(404).json({ success: false, error: "Room not found" });
-    }
+    if(rooms[roomId]) res.json({ success: true, state: rooms[roomId] });
+    else res.status(404).json({ success: false, error: "Room not found" });
 });
 
-// API: Control Video (Play/Pause/Seek)
 app.post('/api/room/:roomId/control', (req, res) => {
     const { roomId } = req.params;
-    const { action, time, adminSecret } = req.body; // action: 'play'|'pause'|'seek'
+    const { action, time } = req.body;
     
     const room = rooms[roomId];
     if(!room) return res.status(404).json({ error: "No Room" });
-
-    // Validate Admin (Simple check based on socket ID mapping or secret)
-    // Here assuming the request comes from authorized frontend logic
-    
-    console.log(`[API CALL] Room: ${roomId} -> Action: ${action} @ ${time}`);
 
     if (action === 'play') {
         room.isPlaying = true;
@@ -68,9 +57,7 @@ app.post('/api/room/:roomId/control', (req, res) => {
     res.json({ success: true, newState: room });
 });
 
-// === 3. VIDEO STREAMING ===
 app.get('/video/:filename', (req, res) => {
-    // Standard Streaming Logic (Same as before)
     const filePath = path.join(DOWNLOAD_DIR, req.params.filename);
     if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
     const stat = fs.statSync(filePath);
@@ -90,27 +77,20 @@ app.get('/video/:filename', (req, res) => {
     }
 });
 
-// === 4. SOCKET LOGIC (CONNECTION & AUDIO) ===
+// === SOCKET LOGIC ===
 io.on('connection', (socket) => {
     
     socket.on('join_room', (roomId) => {
         socket.join(roomId);
         if (!rooms[roomId]) {
             rooms[roomId] = { 
-                admins: [socket.id], 
-                users: [], 
-                videoFilename: null, 
-                currentTime: 0, 
-                isPlaying: false,
-                status: 'idle',
-                duration: 0
+                admins: [socket.id], users: [], videoFilename: null, 
+                currentTime: 0, isPlaying: false, status: 'idle', duration: 0
             };
         } else {
-            // Re-joining user? Just add to list
             if(!rooms[roomId].users.includes(socket.id)) rooms[roomId].users.push(socket.id);
         }
 
-        // 🔥 INJECTION: Send exact server state immediately
         const room = rooms[roomId];
         socket.emit('inject_state', {
             time: room.currentTime,
@@ -118,71 +98,76 @@ io.on('connection', (socket) => {
             filename: room.videoFilename,
             isAdmin: room.admins.includes(socket.id)
         });
-        
-        io.to(roomId).emit('update_users', { count: room.users.length });
     });
 
-    // --- 🎤 GLOBAL AUDIO RELAY (API STYLE) ---
-    // Instead of P2P, we send audio chunks to server, server broadcasts to room
     socket.on('audio_stream', (data) => {
-        // data = { roomId, audioChunk }
-        // Broadcast to everyone in room EXCEPT sender
         socket.to(data.roomId).emit('global_voice', data.audioChunk);
     });
 
-    // --- DOWNLOAD START ---
+    // --- 🔥 FIXED DOWNLOAD LOGIC ---
     socket.on('start_download', async (data) => {
         const room = rooms[data.roomId];
         if(!room) return;
         
-        io.to(data.roomId).emit('status_msg', "⬇️ Server Downloading...");
+        console.log(`[START] Downloading: ${data.url} Quality: ${data.quality}`);
+        io.to(data.roomId).emit('status_msg', "⬇️ Server Downloading (Check Logs)...");
         
         const filename = `${uuidv4()}.mp4`;
         const outputPath = path.join(DOWNLOAD_DIR, filename);
-        let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
+        
+        // Simpler, more robust formats
+        let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${data.quality}][ext=mp4]/best`;
         if (data.quality === 'audio') format = 'bestaudio/best';
 
         try {
             await youtubedl(data.url, {
-                output: outputPath, format: format, noCheckCertificates: true,
-                preferFreeFormats: true, extractorArgs: "youtube:player_client=android"
+                output: outputPath,
+                format: format,
+                noCheckCertificates: true,
+                noWarnings: true,
+                preferFreeFormats: true,
+                extractorArgs: "youtube:player_client=android", // Anti-block
+                verbose: true // 🔥 Show logs in Railway
             });
+            
+            console.log(`[SUCCESS] File saved: ${filename}`);
             
             room.videoFilename = filename;
             room.currentTime = 0;
-            room.isPlaying = true; // Auto start
+            room.isPlaying = true;
             room.status = 'playing';
             room.duration = data.duration || 3600;
 
             io.to(data.roomId).emit('ready_to_play', { filename });
         } catch (e) {
-            io.to(data.roomId).emit('status_msg', "❌ Download Error");
+            console.error("[ERROR] Download Failed:", e);
+            io.to(data.roomId).emit('status_msg', "❌ Download Failed! Check Server Logs.");
         }
     });
 
-    // --- INFO FETCH ---
     socket.on('get_info', async (data) => {
+        console.log(`[INFO] Fetching metadata for ${data.url}`);
         try {
-            const out = await youtubedl(data.url, { dumpSingleJson: true, noWarnings: true });
+            const out = await youtubedl(data.url, { 
+                dumpSingleJson: true, 
+                noWarnings: true,
+                noCheckCertificates: true,
+                extractorArgs: "youtube:player_client=android"
+            });
             socket.emit('info_result', { title: out.title, url: data.url, duration: out.duration });
-        } catch (e) { socket.emit('status_msg', "❌ Invalid Link"); }
-    });
-
-    socket.on('disconnect', () => {
-        // Simple cleanup
+        } catch (e) { 
+            console.error("[INFO ERROR]", e.message);
+            socket.emit('status_msg', "❌ Invalid Link or Server Blocked"); 
+        }
     });
 });
 
-// === 🔥 MASTER CLOCK ENGINE 🔥 ===
-// This runs regardless of who is connected. 
-// It simulates the "Live Stream" progressing.
+// Master Clock
 setInterval(() => {
     for (const id in rooms) {
         const room = rooms[id];
         if (room.status === 'playing' && room.videoFilename) {
             room.currentTime += 1;
-            
-            // Optional: Every 5 seconds, force sync via socket to correct drift
             if (Math.floor(room.currentTime) % 5 === 0) {
                  io.to(id).emit('clock_sync', { time: room.currentTime });
             }
