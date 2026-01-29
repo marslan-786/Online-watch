@@ -12,8 +12,14 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 // === CONFIGURATION ===
+// === CONFIGURATION ===
 const PORT = process.env.PORT || 3000;
-const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
+
+// اگر ریلوے والیوم ماؤنٹ ہو تو وہاں رکھو، ورنہ لوکل فولڈر میں
+// Railway Volume Mount Path should be: /app/downloads
+const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'downloads');
+
+// Ensure download 
 
 // Ensure download folder exists
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
