@@ -3,268 +3,282 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stream</title>
+    <title>API Live Stream</title>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --primary: #e50914; --dark: #000; --text: #fff; }
-        body { background-color: var(--dark); color: var(--text); font-family: sans-serif; margin: 0; padding: 0; overflow: hidden; height: 100vh; width: 100vw; }
+        :root { --primary: #00e676; --bg: #000; }
+        body { background: var(--bg); color: white; margin: 0; height: 100vh; overflow: hidden; font-family: sans-serif; }
         
         .hidden { display: none !important; }
-        .center-flex { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; z-index: 200; position: relative; }
+        .flex-center { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; width: 100%; }
 
-        /* --- 🔥 FIX: FULL SCREEN VIDEO --- */
-        #player-screen { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: black; z-index: 10;
-        }
-        .video-wrapper { 
-            width: 100%; height: 100%; 
-            display: flex; align-items: center; justify-content: center; 
-        }
-        /* یہ لائن ویڈیو کو سکرین پر فٹ کرے گی اور پچکنے نہیں دے گی */
-        video { 
-            width: 100%; height: 100%; 
-            object-fit: contain !important; 
-        }
-        /* Plyr Fixes */
-        .plyr { width: 100%; height: 100%; }
-        .plyr__video-wrapper { width: 100%; height: 100%; }
+        /* Full Screen Video */
+        #player-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; background: black; }
+        video { width: 100%; height: 100%; object-fit: contain; }
 
-        /* UI Elements (Floating) */
-        .box { background: rgba(30,30,30,0.9); padding: 20px; border-radius: 10px; width: 80%; max-width: 350px; text-align: center; border: 1px solid #444; backdrop-filter: blur(5px); }
-        input { width: 100%; padding: 10px; margin: 10px 0; background: #222; border: 1px solid #555; color: white; border-radius: 5px; box-sizing: border-box; }
-        .btn { background: var(--primary); color: white; border: none; padding: 10px; width: 100%; border-radius: 5px; font-weight: bold; margin-top: 5px; }
-
-        /* Top Bar */
-        .top-bar { position: absolute; top: 0; left: 0; width: 100%; padding: 10px; display: flex; justify-content: flex-end; z-index: 100; box-sizing: border-box; pointer-events: none; }
-        .icon-btn { width: 40px; height: 40px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; margin-left: 10px; }
-        #mic-btn.active { background: #00e676; color: black; box-shadow: 0 0 15px #00e676; }
-
-        /* Glass Shield for Users */
-        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; display: none; }
+        /* Glass Shield (Blocks User Interaction) */
+        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; display: none; }
         body:not(.is-admin) #glass-shield { display: block; }
-        body:not(.is-admin) .plyr__controls { display: none !important; } /* Hide user controls */
 
+        /* Controls UI */
+        .ui-box { position: absolute; z-index: 100; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; border: 1px solid #333; backdrop-filter: blur(5px); }
+        
+        /* Lobby Box */
+        #lobby { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 400px; text-align: center; }
+        input { width: 100%; padding: 10px; margin: 10px 0; background: #222; border: 1px solid #555; color: white; text-align: center; }
+        .btn { background: var(--primary); color: black; border: none; padding: 10px 20px; width: 100%; font-weight: bold; cursor: pointer; border-radius: 5px; }
+
+        /* Admin Controls (Floating Bottom) */
+        #admin-bar { 
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); 
+            display: flex; gap: 15px; z-index: 50; 
+            background: rgba(20,20,20,0.9); padding: 10px 20px; border-radius: 30px; border: 1px solid #444;
+        }
+        
+        /* Mic Button (Floating Top Right) */
+        #mic-btn {
+            position: fixed; top: 20px; right: 20px; z-index: 100;
+            width: 50px; height: 50px; border-radius: 50%;
+            background: rgba(255,0,0,0.8); color: white; border: 2px solid white;
+            display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #mic-btn.active { background: var(--primary); box-shadow: 0 0 20px var(--primary); border-color: var(--primary); }
+
+        /* Admin Only Visibility */
+        .admin-only { display: none !important; }
+        body.is-admin .admin-only { display: flex !important; }
+        
         /* Quality Modal */
-        #quality-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 300; display: flex; align-items: center; justify-content: center; }
+        #quality-modal { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:200; display:flex; align-items:center; justify-content:center; }
         .q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
-        .q-btn { background: #333; color: white; border: 1px solid #555; padding: 15px; border-radius: 5px; cursor: pointer; }
+        .q-btn { background: #333; padding: 15px; color: white; border: 1px solid #555; cursor: pointer; }
+
     </style>
 </head>
 <body>
 
-    <div id="lobby-screen" class="center-flex">
-        <div class="box">
-            <h2 style="color:var(--primary); margin:0;">🔴 LIVE STREAM</h2>
-            <input type="text" id="linkInput" placeholder="Paste YouTube Link...">
-            <button class="btn" onclick="fetchInfo()">Load Stream</button>
-            <p id="status-text" style="color:#aaa; font-size:12px; margin-top:10px;"></p>
-        </div>
+    <div id="lobby" class="ui-box">
+        <h2 style="color:var(--primary); margin:0;">API STREAM ENGINE</h2>
+        <input type="text" id="urlInput" placeholder="Paste YouTube Link">
+        <button class="btn" onclick="getLinkInfo()">Load Stream</button>
+        <div id="status" style="margin-top:10px; font-size:12px; color:#aaa;"></div>
     </div>
 
     <div id="quality-modal" class="hidden">
-        <div class="box">
-            <h3>Select Quality</h3>
+        <div class="ui-box" style="position:relative; width:300px; text-align:center;">
+            <h3>Select Resolution</h3>
             <div class="q-grid">
-                <button class="q-btn" onclick="selectQuality('1080')">1080p</button>
-                <button class="q-btn" onclick="selectQuality('720')">720p</button>
-                <button class="q-btn" onclick="selectQuality('480')">480p</button>
-                <button class="q-btn" onclick="selectQuality('audio')">Audio Only</button>
+                <button class="q-btn" onclick="startStream('1080')">1080p</button>
+                <button class="q-btn" onclick="startStream('720')">720p</button>
+                <button class="q-btn" onclick="startStream('480')">480p</button>
+                <button class="q-btn" onclick="startStream('audio')">Audio Only</button>
             </div>
         </div>
     </div>
 
-    <div id="link-screen" class="center-flex hidden">
-        <div class="box">
-            <h3>Stream Ready!</h3>
-            <input type="text" id="share-link-input" readonly onclick="this.select()">
-            <button class="btn" onclick="copyLink()">Copy Link</button>
-            <button class="btn" onclick="enterCinema()">Start Broadcasting</button>
-        </div>
-    </div>
+    <div id="player-container" class="hidden">
+        <div id="glass-shield"></div>
+        <video id="player" playsinline crossorigin></video>
+        
+        <div id="mic-btn" onclick="toggleMic()"><i class="fas fa-microphone-slash"></i></div>
 
-    <div id="player-screen" class="hidden">
-        <div class="top-bar">
-            <div class="icon-btn" id="mic-btn" onclick="toggleMic()"><i class="fas fa-microphone-slash"></i></div>
-            <div class="icon-btn admin-only" onclick="copyLink()"><i class="fas fa-link"></i></div>
+        <div id="admin-bar" class="admin-only">
+            <button class="btn" onclick="apiControl('seek', -10)">⏪ -10s</button>
+            <button class="btn" onclick="apiControl('toggle')">⏯️ Play/Pause</button>
+            <button class="btn" onclick="apiControl('seek', 10)">⏩ +10s</button>
+            <button class="btn" onclick="copyLink()">🔗 Link</button>
         </div>
-
-        <div class="video-wrapper">
-            <div id="glass-shield"></div>
-            <video id="player" playsinline controls crossorigin></video>
-        </div>
-
-        <div id="audio-grid"></div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 
     <script>
         const socket = io();
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
         let player, amIAdmin = false;
-        let currentUrl = '';
+        let currentUrl = '', vidDuration = 0;
 
-        // --- 🔥 VOICE MESH SYSTEM ---
-        let peer, myStream, myPeerId;
-        const peers = {}; // Keep track of calls
+        // --- 1. INITIALIZATION ---
+        if(roomId) {
+            document.getElementById('lobby').classList.add('hidden');
+            document.getElementById('player-container').classList.remove('hidden');
+            socket.emit('join_room', roomId);
+        } else {
+            roomId = Math.random().toString(36).substring(7);
+        }
 
-        function initVoice() {
-            peer = new Peer(undefined, {
-                host: window.location.hostname,
-                port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
-                path: '/peerjs/myapp'
-            });
+        // --- 2. API VIDEO CONTROL ---
+        function apiControl(type, val) {
+            let action = '', time = player.currentTime;
+            
+            if(type === 'toggle') {
+                action = player.paused ? 'play' : 'pause';
+            } else if (type === 'seek') {
+                action = 'seek';
+                time += val;
+            }
 
-            peer.on('open', id => {
-                myPeerId = id;
-            });
-
-            // ANSWER CALLS (From others)
-            peer.on('call', call => {
-                call.answer(myStream); // Answer with my audio
-                const audio = document.createElement('audio');
-                call.on('stream', stream => addAudioStream(audio, stream));
-            });
-
-            // When I join voice, server sends list of EXISTING users
-            socket.on('all_voice_users', (users) => {
-                users.forEach(userId => {
-                    if(userId !== myPeerId) connectToUser(userId);
-                });
-            });
-
-            // When SOMEONE ELSE joins voice
-            socket.on('user_joined_voice', userId => {
-                connectToUser(userId);
+            // HIT THE API
+            fetch(`/api/room/${roomId}/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, time })
+            }).then(r => r.json()).then(d => {
+                console.log("API Response:", d);
             });
         }
+
+        // --- 3. SOCKET LISTENERS (STATE UPDATES) ---
+        socket.on('inject_state', (data) => {
+            console.log("💉 INJECTED STATE:", data);
+            amIAdmin = data.isAdmin;
+            if(amIAdmin) document.body.classList.add('is-admin');
+
+            if(data.filename) {
+                initPlayer(data.filename);
+                // Force sync immediately
+                player.once('ready', () => {
+                    player.currentTime = data.time;
+                    if(data.isPlaying) player.play();
+                });
+            }
+        });
+
+        socket.on('force_sync', (data) => {
+            // Server telling us what to do
+            if(data.action === 'play') player.play();
+            if(data.action === 'pause') player.pause();
+            if(data.action === 'seek') player.currentTime = data.time;
+        });
+
+        // Drift Correction (Clock Sync)
+        socket.on('clock_sync', (data) => {
+            if(!amIAdmin && player && !player.paused) {
+                // If drift is > 2 seconds, snap to server time
+                if(Math.abs(player.currentTime - data.time) > 2) {
+                    player.currentTime = data.time;
+                }
+            }
+        });
+
+        socket.on('ready_to_play', (data) => {
+            if(amIAdmin) {
+                // If I started the download, switch UI now
+                window.location.href = `?room=${roomId}`;
+            }
+        });
+
+        // --- 4. PLAYER SETUP ---
+        function initPlayer(filename) {
+            if(player) return;
+            document.getElementById('lobby').classList.add('hidden');
+            document.getElementById('player-container').classList.remove('hidden');
+
+            player = new Plyr('#player', {
+                controls: [], // No client controls! API only.
+                clickToPlay: false,
+                ratio: '16:9'
+            });
+            player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
+        }
+
+
+        // --- 5. AUDIO SYSTEM (GLOBAL MIC API) ---
+        let audioCtx, processor, source, isMicOn = false;
 
         function toggleMic() {
             const btn = document.getElementById('mic-btn');
-            if(myStream) {
-                // MUTE
-                myStream.getTracks().forEach(t => t.stop());
-                myStream = null;
+            if(isMicOn) {
+                // Stop
+                if(source) source.disconnect();
+                if(processor) processor.disconnect();
+                isMicOn = false;
                 btn.classList.remove('active');
+                btn.innerHTML = '<i class="fas fa-microphone-slash"></i>';
             } else {
-                // UNMUTE
-                navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
-                    myStream = stream;
+                // Start
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    source = audioCtx.createMediaStreamSource(stream);
+                    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+                    
+                    source.connect(processor);
+                    processor.connect(audioCtx.destination);
+
+                    processor.onaudioprocess = (e) => {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        // Convert float32 to 16-bit PCM for efficiency/socket
+                        const buffer = new ArrayBuffer(inputData.length * 2);
+                        const outputView = new DataView(buffer);
+                        for (let i = 0; i < inputData.length; i++) {
+                            let s = Math.max(-1, Math.min(1, inputData[i]));
+                            outputView.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                        }
+                        // Send chunk to server
+                        socket.emit('audio_stream', { roomId, audioChunk: buffer });
+                    };
+
+                    isMicOn = true;
                     btn.classList.add('active');
-                    
-                    // 1. Tell server I'm ready
-                    if(roomId) socket.emit('join_voice', { roomId, peerId: myPeerId });
-                    
-                    // 2. Init logic happens in socket events above
-
-                }).catch(e => alert("Mic Access Denied!"));
+                    btn.innerHTML = '<i class="fas fa-microphone"></i>';
+                }).catch(e => alert("Mic Access Denied"));
             }
         }
 
-        function connectToUser(userId) {
-            if(!myStream) return; // Only call if I have mic on (or create silent stream)
-            const call = peer.call(userId, myStream);
-            const audio = document.createElement('audio');
-            call.on('stream', stream => addAudioStream(audio, stream));
-            peers[userId] = call;
-        }
-
-        function addAudioStream(audio, stream) {
-            audio.srcObject = stream;
-            audio.autoplay = true;
-            document.body.append(audio);
-        }
-
-        // --- APP LOGIC ---
-        if(roomId) {
-            document.getElementById('lobby-screen').classList.add('hidden');
-            document.getElementById('player-screen').classList.remove('hidden');
-            socket.emit('join_room', roomId);
-            initVoice(); // Prepare PeerJS
-        }
-
-        function fetchInfo() {
-            const link = document.getElementById('linkInput').value;
-            if(!link) return;
-            if(!roomId) {
-                roomId = Math.random().toString(36).substring(7);
-                window.history.pushState({}, '', `?room=${roomId}`);
-                socket.emit('join_room', roomId);
-                initVoice();
+        // Play incoming audio
+        socket.on('global_voice', (arrayBuffer) => {
+            if(!isMicOn) { // Prevent hearing myself loopback (simple logic)
+                 playAudioChunk(arrayBuffer);
             }
-            socket.emit('get_video_info', { roomId, url: link });
-            document.getElementById('status-text').innerText = "Processing...";
+        });
+
+        // Simple PCM Player for incoming chunks
+        let nextTime = 0;
+        function playAudioChunk(buffer) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            const int16 = new Int16Array(buffer);
+            const float32 = new Float32Array(int16.length);
+            for(let i=0; i<int16.length; i++) {
+                float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
+            }
+
+            const audioBuffer = audioCtx.createBuffer(1, float32.length, audioCtx.sampleRate);
+            audioBuffer.getChannelData(0).set(float32);
+            
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+            
+            if (nextTime < audioCtx.currentTime) nextTime = audioCtx.currentTime;
+            source.start(nextTime);
+            nextTime += audioBuffer.duration;
         }
 
-        socket.on('show_quality_menu', (data) => {
+
+        // --- LOBBY LOGIC ---
+        function getLinkInfo() {
+            const url = document.getElementById('urlInput').value;
+            if(!url) return;
+            document.getElementById('status').innerText = "Fetching Info...";
+            socket.emit('get_info', { url });
+        }
+        socket.on('info_result', (data) => {
             currentUrl = data.url;
+            vidDuration = data.duration;
             document.getElementById('quality-modal').classList.remove('hidden');
         });
-
-        function selectQuality(q) {
+        function startStream(q) {
             document.getElementById('quality-modal').classList.add('hidden');
-            document.getElementById('status-text').innerText = "Downloading...";
-            socket.emit('start_download', { roomId, url: currentUrl, quality: q });
+            document.getElementById('status').innerText = "Initiating Server Download...";
+            socket.emit('start_download', { roomId, url: currentUrl, quality: q, duration: vidDuration });
         }
-
-        socket.on('download_complete', (data) => {
-            if(amIAdmin) {
-                document.getElementById('lobby-screen').classList.add('hidden');
-                document.getElementById('link-screen').classList.remove('hidden');
-                document.getElementById('share-link-input').value = window.location.href;
-            }
-        });
-
-        function enterCinema() {
-            document.getElementById('link-screen').classList.add('hidden');
-            document.getElementById('player-screen').classList.remove('hidden');
-        }
-
-        // --- PLAYER INIT & SYNC ---
-        socket.on('sync_immediate', (data) => {
-            if(data.filename) initPlayer(data.filename, data.time, data.isPlaying);
-        });
-
-        socket.on('update_room_data', (room) => {
-            amIAdmin = room.admins.includes(socket.id);
-            if(amIAdmin) document.body.classList.add('is-admin');
-            
-            if(room.status === 'ready' && !player && !document.getElementById('link-screen').classList.contains('hidden')) {
-                // If user is late, auto show player
-                document.getElementById('lobby-screen').classList.add('hidden');
-                document.getElementById('player-screen').classList.remove('hidden');
-                initPlayer(room.videoFilename, room.currentTime, room.isPlaying);
-            }
-        });
-
-        function initPlayer(filename, startTime, isPlaying) {
-            if(player) return;
-            
-            player = new Plyr('#player', { 
-                controls: amIAdmin ? ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'] : [],
-                clickToPlay: amIAdmin,
-                ratio: '16:9'
-            });
-
-            player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
-            
-            player.on('ready', () => {
-                player.currentTime = startTime;
-                if(isPlaying || !amIAdmin) player.play(); // Auto play for everyone
-            });
-
-            // Admin updates server time periodically
-            if(amIAdmin) {
-                setInterval(() => { if(!player.paused) socket.emit('time_update', { roomId, time: player.currentTime }); }, 1000);
-            }
-        }
-        
         function copyLink() { navigator.clipboard.writeText(window.location.href); alert("Copied"); }
+
     </script>
 </body>
 </html>
