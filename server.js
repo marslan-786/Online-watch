@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process'); // 🔥 Native Command Runner
+const { spawn, exec } = require('child_process'); // 🔥 Native Command Runner
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -17,6 +17,15 @@ const PORT = process.env.PORT || 3000;
 const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'downloads');
 
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
+
+// === 🔥 STARTUP CHECK (VERIFY YT-DLP) ===
+exec('yt-dlp --version', (error, stdout, stderr) => {
+    if (error) {
+        console.error("❌ CRITICAL: yt-dlp NOT FOUND! Install it in Dockerfile.");
+    } else {
+        console.log(`✅ yt-dlp is installed! Version: ${stdout.trim()}`);
+    }
+});
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -50,7 +59,6 @@ io.on('connection', (socket) => {
             if(!rooms[roomId].users.includes(socket.id)) rooms[roomId].users.push(socket.id);
         }
         
-        // Inject State
         const room = rooms[roomId];
         socket.emit('inject_state', {
             time: room.currentTime,
@@ -60,30 +68,23 @@ io.on('connection', (socket) => {
         });
     });
 
-    // --- 🎤 AUDIO STREAM ---
     socket.on('audio_stream', (data) => socket.to(data.roomId).emit('global_voice', data.audioChunk));
 
     // --- 🔍 GET INFO (Native Spawn) ---
     socket.on('get_info', (data) => {
         console.log(`[INFO START] Fetching metadata: ${data.url}`);
         
-        // Using python directly for raw output
         const yt = spawn('yt-dlp', [
             data.url, 
             '--dump-single-json', 
             '--no-warnings', 
-            '--force-ipv4', // 🔥 Force IPv4 to prevent hanging
+            '--force-ipv4',
             '--extractor-args', 'youtube:player_client=android'
         ]);
 
         let rawData = '';
-        let errorData = '';
-
         yt.stdout.on('data', (chunk) => rawData += chunk);
-        yt.stderr.on('data', (chunk) => {
-            errorData += chunk;
-            console.log(`[YT LOG]: ${chunk}`); // Hard Print Logs
-        });
+        yt.stderr.on('data', (chunk) => console.log(`[YT LOG]: ${chunk}`)); 
 
         yt.on('close', (code) => {
             if (code === 0) {
@@ -97,7 +98,7 @@ io.on('connection', (socket) => {
                 }
             } else {
                 console.error(`[INFO FAIL] Exit Code: ${code}`);
-                socket.emit('status_msg', "❌ Failed to fetch video info. Check logs.");
+                socket.emit('status_msg', "❌ Link Error. Check Logs.");
             }
         });
     });
@@ -110,38 +111,34 @@ io.on('connection', (socket) => {
         const filename = `${uuidv4()}.mp4`;
         const outputPath = path.join(DOWNLOAD_DIR, filename);
         
-        // Format Logic
+        // Simpler format string to avoid merging errors
         let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${data.quality}][ext=mp4]/best`;
         if (data.quality === 'audio') format = 'bestaudio/best';
 
         console.log(`[DOWNLOAD START] ${data.url} -> ${filename}`);
 
+        // 🔥 GO STYLE SPAWN (Native)
         const yt = spawn('yt-dlp', [
             data.url,
             '-f', format,
             '-o', outputPath,
-            '--force-ipv4',  // 🔥 Critical for Railway
-            '--newline',     // 🔥 Critical for Progress Bar Parsing
+            '--force-ipv4',
+            '--newline',     // Essential for progress bar
             '--no-warnings',
-            '--extractor-args', 'youtube:player_client=android' // 🔥 Anti-Block
+            '--extractor-args', 'youtube:player_client=android'
         ]);
 
         yt.stdout.on('data', (chunk) => {
             const line = chunk.toString();
-            // console.log(`[YT OUT]: ${line}`); // Uncomment for EXTREME logging
-
-            // Parse Percentage: "[download]  45.5% of 100MiB"
+            // Parse Percentage
             const match = line.match(/\[download\]\s+(\d+\.\d+)%/);
             if (match && match[1]) {
                 const percent = parseFloat(match[1]);
-                // Emit progress to Room
                 io.to(data.roomId).emit('download_progress', { percent: percent });
             }
         });
 
-        yt.stderr.on('data', (chunk) => {
-            console.error(`[YT ERROR/LOG]: ${chunk.toString()}`); // Hard print errors
-        });
+        yt.stderr.on('data', (chunk) => console.log(`[YT STDERR]: ${chunk}`));
 
         yt.on('close', (code) => {
             if (code === 0) {
@@ -154,13 +151,12 @@ io.on('connection', (socket) => {
                 io.to(data.roomId).emit('download_complete', { filename });
             } else {
                 console.error(`[DOWNLOAD FAILED] Code: ${code}`);
-                io.to(data.roomId).emit('status_msg', "❌ Download Failed. Check Server Console.");
+                io.to(data.roomId).emit('status_msg', "❌ Download Failed.");
             }
         });
     });
 });
 
-// Clock Sync
 setInterval(() => {
     for (const id in rooms) {
         const room = rooms[id];
