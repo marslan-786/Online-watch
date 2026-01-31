@@ -19,9 +19,10 @@ const DOWNLOAD_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirnam
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
 
 // Startup Check
+console.log("🛠️ STARTING SERVER WITH FULL DEBUG LOGGING...");
 exec('yt-dlp --version', (err, stdout) => {
-    if(err) console.error("❌ yt-dlp Missing! Update Dockerfile.");
-    else console.log(`✅ yt-dlp Verified: ${stdout.trim()}`);
+    if(err) console.error("❌ yt-dlp CRITICAL ERROR: Not Found!");
+    else console.log(`✅ yt-dlp Binary Found: ${stdout.trim()}`);
 });
 
 app.use(express.json());
@@ -65,25 +66,37 @@ io.on('connection', (socket) => {
 
     // --- INFO FETCH ---
     socket.on('get_info', (data) => {
-        console.log(`[INFO] Checking: ${data.url}`);
+        console.log(`[INFO REQ] URL: ${data.url}`);
+        
+        // Using spawn here too for logs
         const yt = spawn('yt-dlp', [
-            data.url, '--dump-single-json', '--no-warnings', '--force-ipv4', 
+            data.url, '--dump-single-json', 
+            '--no-warnings', '--force-ipv4', 
             '--extractor-args', 'youtube:player_client=android'
         ]);
+
         let rawData = '';
         yt.stdout.on('data', c => rawData += c);
+        yt.stderr.on('data', c => console.log(`[YT-INFO STDERR]: ${c.toString()}`)); // Print stderr
+
         yt.on('close', c => {
             if(c===0) {
                 try {
                     const info = JSON.parse(rawData);
-                    console.log(`[INFO OK] ${info.title}`);
+                    console.log(`[INFO OK] Title: ${info.title}`);
                     socket.emit('info_result', { title: info.title, url: data.url });
-                } catch(e) { socket.emit('status_msg', "❌ Parse Error"); }
-            } else socket.emit('status_msg', "❌ Link Failed");
+                } catch(e) { 
+                    console.error("[JSON PARSE FAIL]", e);
+                    socket.emit('status_msg', "❌ JSON Parse Error"); 
+                }
+            } else {
+                console.error(`[INFO FAIL] Exit Code: ${c}`);
+                socket.emit('status_msg', "❌ Link Failed");
+            }
         });
     });
 
-    // --- 🔥 ROBUST DOWNLOAD LOGIC ---
+    // --- 🔥 RAW DEBUG DOWNLOAD ---
     socket.on('start_download', (data) => {
         const room = rooms[data.roomId];
         if(!room) return;
@@ -91,55 +104,58 @@ io.on('connection', (socket) => {
         const filename = `${uuidv4()}.mp4`;
         const outputPath = path.join(DOWNLOAD_DIR, filename);
         
-        // Format String
         let format = `bestvideo[height<=${data.quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${data.quality}][ext=mp4]/best`;
         if (data.quality === 'audio') format = 'bestaudio/best';
 
-        console.log(`[DL START] ${data.url} [${data.quality}p]`);
+        console.log(`🚀 [LAUNCHING YT-DLP]`);
+        console.log(`   URL: ${data.url}`);
+        console.log(`   Quality: ${data.quality}`);
+        console.log(`   Output: ${outputPath}`);
 
         const yt = spawn('yt-dlp', [
             data.url,
             '-f', format,
             '-o', outputPath,
             '--force-ipv4',
-            '--newline',     // ہر اپڈیٹ نئی لائن پر
-            '--no-colors',   // رنگ ختم کریں تاکہ Regex آسانی سے پڑھے
-            '--no-warnings',
+            '--newline',     // Line breaks enable
+            '--verbose',     // 🔥 PRINT EVERYTHING (Request/Response headers etc)
+            '--no-colors',   // Colors remove for clean logs
             '--extractor-args', 'youtube:player_client=android'
         ]);
 
+        // 🔥 RAW STDOUT PRINTER
         yt.stdout.on('data', (chunk) => {
-            const text = chunk.toString();
+            const line = chunk.toString().trim();
             
-            // 🔥 DEBUG LOG (تاکہ ریلوے کنسول میں نظر آئے)
-            console.log(`[YT RAW] ${text.trim()}`);
+            // 1. PRINT RAW LOG TO SERVER CONSOLE
+            if(line) console.log(`[YT STDOUT] ${line}`);
 
-            // Split lines to handle fast buffering
-            const lines = text.split('\n');
-            for (const line of lines) {
-                // Regex: Matches "45%" or "45.5%"
-                const match = line.match(/(\d+(\.\d+)?)%/);
-                if (match && match[1]) {
-                    const percent = parseFloat(match[1]);
-                    // صرف تب بھیجیں جب فیصد تبدیل ہو تاکہ ساکٹ سپیم نہ ہو
-                    io.to(data.roomId).emit('download_progress', { percent });
-                }
+            // 2. PARSE PROGRESS FOR UI (Still needed for frontend)
+            // Regex for: "[download]  45.5% of 100MiB at 5.00MiB/s ETA 00:05"
+            const match = line.match(/(\d{1,3}(\.\d+)?)%/);
+            if (match && match[1]) {
+                const percent = parseFloat(match[1]);
+                io.to(data.roomId).emit('download_progress', { percent });
             }
         });
 
-        yt.stderr.on('data', c => console.error(`[YT ERR] ${c}`));
+        // 🔥 RAW STDERR PRINTER (Errors/Warnings/Debug Info)
+        yt.stderr.on('data', (chunk) => {
+            const line = chunk.toString().trim();
+            if(line) console.error(`[YT STDERR] ${line}`);
+        });
 
         yt.on('close', (code) => {
             if (code === 0) {
-                console.log(`[DL DONE] ${filename}`);
+                console.log(`✅ [DOWNLOAD FINISHED] File: ${filename}`);
                 room.videoFilename = filename;
                 room.currentTime = 0;
                 room.isPlaying = true;
                 room.status = 'playing';
                 io.to(data.roomId).emit('download_complete', { filename });
             } else {
-                console.error(`[DL FAIL] Exit Code: ${code}`);
-                io.to(data.roomId).emit('status_msg', "❌ Download Failed");
+                console.error(`❌ [DOWNLOAD CRASHED] Exit Code: ${code}`);
+                io.to(data.roomId).emit('status_msg', `❌ Download Failed (Code ${code})`);
             }
         });
     });
@@ -155,4 +171,4 @@ setInterval(() => {
     }
 }, 1000);
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Server on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 DEBUG SERVER READY ON ${PORT}`));
