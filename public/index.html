@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stream Engine</title>
+    <title>Live Stream</title>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -23,14 +23,14 @@
 
         #player-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; background: black; }
         video { width: 100%; height: 100%; object-fit: contain; }
-        #glass-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; display: none; }
-        body:not(.is-admin) #glass-shield { display: block; }
-
-        #admin-bar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(20,20,20,0.9); padding: 10px 20px; border-radius: 30px; border: 1px solid #444; }
+        
+        /* Glass Shield REMOVED - Everyone can click, but we use API */
+        
+        /* Controls Bar (Visible to ALL) */
+        #controls-bar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 50; background: rgba(20,20,20,0.9); padding: 10px 20px; border-radius: 30px; border: 1px solid #444; }
+        
         #mic-btn { position: fixed; top: 20px; right: 20px; z-index: 100; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,0,0,0.8); color: white; border: 2px solid white; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; }
         #mic-btn.active { background: var(--primary); border-color: var(--primary); box-shadow: 0 0 15px var(--primary); }
-        .admin-only { display: none !important; }
-        body.is-admin .admin-only { display: flex !important; }
         
         .q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
         .q-btn { background: #333; padding: 15px; color: white; border: 1px solid #555; cursor: pointer; border-radius: 5px; }
@@ -40,9 +40,9 @@
 
     <div id="lobby" class="center-flex">
         <div class="ui-box">
-            <h2 style="color:var(--primary); margin:0;">API STREAM</h2>
-            <input type="text" id="urlInput" placeholder="Paste YouTube Link">
-            <button class="btn" onclick="getLinkInfo()">Fetch Video</button>
+            <h2 style="color:var(--primary); margin:0;">LIVE STREAM</h2>
+            <input type="text" id="urlInput" placeholder="Paste Any Link">
+            <button class="btn" onclick="getLinkInfo()">Start Stream</button>
             <div id="status" style="margin-top:10px; color:#aaa; font-size:12px;"></div>
         </div>
     </div>
@@ -63,31 +63,30 @@
 
     <div id="progress-screen" class="center-flex hidden">
         <div class="ui-box">
-            <h3>Downloading on Server...</h3>
+            <h3>Server Loading...</h3>
             <div class="progress-container">
                 <div id="progress-fill" class="progress-fill"></div>
             </div>
             <div id="percent-text">0%</div>
-            <p style="color:#aaa; font-size:12px; margin-top:10px;">Converting & Processing...</p>
+            <p style="color:#aaa; font-size:12px; margin-top:10px;">Please wait...</p>
         </div>
     </div>
 
     <div id="link-screen" class="center-flex hidden">
         <div class="ui-box">
             <i class="fas fa-check-circle" style="color:var(--primary); font-size:50px; margin-bottom:15px;"></i>
-            <h3>Stream Ready!</h3>
+            <h3>Live Now!</h3>
             <input type="text" id="share-link-input" readonly onclick="this.select()">
             <button class="btn" style="background:#333; border:1px solid #555;" onclick="copyLink()">Copy Link</button>
-            <button class="btn" onclick="enterCinema()">Open Player</button>
+            <button class="btn" onclick="enterCinema()">Join Stream</button>
         </div>
     </div>
 
     <div id="player-container" class="hidden">
-        <div id="glass-shield"></div>
         <video id="player" playsinline crossorigin></video>
         <div id="mic-btn" onclick="toggleMic()"><i class="fas fa-microphone-slash"></i></div>
         
-        <div id="admin-bar" class="admin-only">
+        <div id="controls-bar">
             <button class="btn" onclick="apiControl('seek', -10)">⏪</button>
             <button class="btn" onclick="apiControl('toggle')">⏯️</button>
             <button class="btn" onclick="apiControl('seek', 10)">⏩</button>
@@ -101,14 +100,11 @@
         const socket = io();
         const urlParams = new URLSearchParams(window.location.search);
         let roomId = urlParams.get('room');
-        let player, amIAdmin = false;
+        let player;
         let currentUrl = '';
-        // Flag to track if WE started the download (so we become admin)
-        let iStartedDownload = false;
 
         if(roomId) {
             showScreen('player-container');
-            // Connect logic handled in socket.on('connect') below
         } else {
             roomId = Math.random().toString(36).substring(7);
         }
@@ -127,17 +123,23 @@
         function getLinkInfo() {
             const url = document.getElementById('urlInput').value;
             if(!url) return;
-            document.getElementById('status').innerText = "Connecting...";
+            document.getElementById('status').innerText = "Analyzing...";
             socket.emit('get_info', { url });
         }
 
+        // YouTube -> Show Menu
         socket.on('info_result', (data) => {
             currentUrl = data.url;
             showScreen('quality-screen');
         });
 
+        // Direct Link -> Auto Start
+        socket.on('auto_download_start', (data) => {
+            currentUrl = data.url;
+            startStream('best'); // Auto pick best
+        });
+
         function startStream(q) {
-            iStartedDownload = true; // Mark that I am the creator
             showScreen('progress-screen');
             socket.emit('start_download', { roomId, url: currentUrl, quality: q });
         }
@@ -149,54 +151,56 @@
             document.getElementById('percent-text').innerText = Math.floor(data.percent) + '%';
         });
 
-        // --- 🔥 FIXED COMPLETION LOGIC ---
         socket.on('download_complete', (data) => {
-            // If I started the download OR I am the admin, show the Link Screen
-            if(iStartedDownload || amIAdmin) {
-                document.getElementById('share-link-input').value = window.location.origin + `?room=${roomId}`;
+            document.getElementById('share-link-input').value = window.location.origin + `?room=${roomId}`;
+            // If we are already in player (users), reload player. If in lobby (admin), show link.
+            if(document.getElementById('player-container').classList.contains('hidden')) {
                 showScreen('link-screen');
             } else {
-                // Regular users go straight to player
                 initPlayer(data.filename);
-                showScreen('player-container');
             }
         });
 
         function enterCinema() {
-            // Add room param to URL without reloading
             window.history.pushState({}, '', `?room=${roomId}`);
             showScreen('player-container');
-            // Re-join to ensure state is fresh
+            // Re-join to get fresh state
             socket.emit('join_room', roomId);
         }
 
+        // --- 🔥 INJECTION LOGIC (Background Play Fix) ---
         socket.on('inject_state', (data) => {
-            amIAdmin = data.isAdmin;
-            if(amIAdmin) document.body.classList.add('is-admin');
+            console.log("💉 State Received:", data);
             
-            // If video is ready, load player
             if(data.filename) {
-                // If we are still in lobby/progress but video exists, jump to player
-                // (Unless we are showing the Link Screen, let that stay)
-                if (document.getElementById('player-container').classList.contains('hidden') && 
-                    document.getElementById('link-screen').classList.contains('hidden')) {
-                     showScreen('player-container');
+                // If waiting on screens, jump to player
+                if(document.getElementById('player-container').classList.contains('hidden') && 
+                   document.getElementById('link-screen').classList.contains('hidden')) {
+                    showScreen('player-container');
                 }
-                
+
                 initPlayer(data.filename);
+                
+                // Wait for player ready, then SEEK & PLAY
                 player.once('ready', () => {
+                    console.log(`Seeking to server time: ${data.time}`);
                     player.currentTime = data.time;
-                    if(data.isPlaying) player.play();
+                    if(data.isPlaying) {
+                        console.log("Server is playing, forcing play...");
+                        player.play();
+                    }
                 });
             }
         });
 
         function initPlayer(filename) {
             if(player) return;
-            player = new Plyr('#player', { controls: [], clickToPlay: false, ratio: '16:9' });
+            // No 'clickToPlay: false' -> Everyone can click if they want (but API controls prefered)
+            player = new Plyr('#player', { controls: [], ratio: '16:9' });
             player.source = { type: 'video', sources: [{ src: `/stream/${filename}`, type: 'video/mp4' }] };
         }
 
+        // --- API CONTROL (Available to Everyone) ---
         function apiControl(type, val) {
             let action = '', time = player.currentTime;
             if(type === 'toggle') action = player.paused ? 'play' : 'pause';
@@ -217,7 +221,7 @@
         socket.on('status_msg', (msg) => alert(msg));
         function copyLink() { navigator.clipboard.writeText(document.getElementById('share-link-input').value || window.location.href); alert("Copied"); }
 
-        // AUDIO
+        // --- AUDIO ---
         let audioCtx, processor, source, isMicOn = false;
         function toggleMic() {
             const btn = document.getElementById('mic-btn');
