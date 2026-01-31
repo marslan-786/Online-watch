@@ -19,7 +19,7 @@
         /* Progress Bar */
         .progress-container { width: 100%; background: #333; height: 15px; border-radius: 10px; margin: 20px 0; overflow: hidden; border: 1px solid #555; }
         .progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s ease-out; box-shadow: 0 0 10px var(--primary); }
-        #percent-text { font-size: 28px; font-weight: bold; color: var(--primary); text-shadow: 0 0 10px rgba(0,230,118,0.5); }
+        #percent-text { font-size: 28px; font-weight: bold; color: var(--primary); }
 
         #player-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; background: black; }
         video { width: 100%; height: 100%; object-fit: contain; }
@@ -103,13 +103,21 @@
         let roomId = urlParams.get('room');
         let player, amIAdmin = false;
         let currentUrl = '';
+        // Flag to track if WE started the download (so we become admin)
+        let iStartedDownload = false;
 
         if(roomId) {
             showScreen('player-container');
-            socket.emit('join_room', roomId);
+            // Connect logic handled in socket.on('connect') below
         } else {
             roomId = Math.random().toString(36).substring(7);
         }
+
+        // --- RECONNECTION LOGIC ---
+        socket.on('connect', () => {
+            console.log("🔌 Connected!");
+            if(roomId) socket.emit('join_room', roomId);
+        });
 
         function showScreen(id) {
             document.querySelectorAll('body > div').forEach(d => d.classList.add('hidden'));
@@ -129,6 +137,7 @@
         });
 
         function startStream(q) {
+            iStartedDownload = true; // Mark that I am the creator
             showScreen('progress-screen');
             socket.emit('start_download', { roomId, url: currentUrl, quality: q });
         }
@@ -140,22 +149,40 @@
             document.getElementById('percent-text').innerText = Math.floor(data.percent) + '%';
         });
 
+        // --- 🔥 FIXED COMPLETION LOGIC ---
         socket.on('download_complete', (data) => {
-            if(amIAdmin) {
-                document.getElementById('share-link-input').value = window.location.href + `?room=${roomId}`;
+            // If I started the download OR I am the admin, show the Link Screen
+            if(iStartedDownload || amIAdmin) {
+                document.getElementById('share-link-input').value = window.location.origin + `?room=${roomId}`;
                 showScreen('link-screen');
             } else {
+                // Regular users go straight to player
                 initPlayer(data.filename);
+                showScreen('player-container');
             }
         });
 
-        function enterCinema() { window.location.href = `?room=${roomId}`; }
+        function enterCinema() {
+            // Add room param to URL without reloading
+            window.history.pushState({}, '', `?room=${roomId}`);
+            showScreen('player-container');
+            // Re-join to ensure state is fresh
+            socket.emit('join_room', roomId);
+        }
 
         socket.on('inject_state', (data) => {
             amIAdmin = data.isAdmin;
             if(amIAdmin) document.body.classList.add('is-admin');
+            
+            // If video is ready, load player
             if(data.filename) {
-                showScreen('player-container');
+                // If we are still in lobby/progress but video exists, jump to player
+                // (Unless we are showing the Link Screen, let that stay)
+                if (document.getElementById('player-container').classList.contains('hidden') && 
+                    document.getElementById('link-screen').classList.contains('hidden')) {
+                     showScreen('player-container');
+                }
+                
                 initPlayer(data.filename);
                 player.once('ready', () => {
                     player.currentTime = data.time;
@@ -188,7 +215,7 @@
         });
 
         socket.on('status_msg', (msg) => alert(msg));
-        function copyLink() { navigator.clipboard.writeText(window.location.href); alert("Copied"); }
+        function copyLink() { navigator.clipboard.writeText(document.getElementById('share-link-input').value || window.location.href); alert("Copied"); }
 
         // AUDIO
         let audioCtx, processor, source, isMicOn = false;
